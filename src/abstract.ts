@@ -11,14 +11,30 @@ import {
   createCacheData,
   generateCacheFilePath,
   createResourceLink,
+  validatePath,
+  validateDirectory,
   ToolInfo
 } from "./core.js";
 
-const CACHE_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../cache");
+// Parse allowed directories from command line arguments
+const allowedDirs = process.argv.slice(2).filter(arg => !arg.startsWith('-'));
 
+// Fallback to cache directory if no directories specified (backward compatibility)
+const CACHE_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../cache");
+const STORAGE_DIRS = allowedDirs.length > 0 ? allowedDirs : [CACHE_DIR];
 
 async function main() {
-  await fs.mkdir(CACHE_DIR, { recursive: true });
+  // Create storage directories
+  for (const dir of STORAGE_DIRS) {
+    await fs.mkdir(dir, { recursive: true });
+  }
+  
+  // Log configuration for debugging
+  console.error(`Storage directories: ${STORAGE_DIRS.join(', ')}`);
+  if (allowedDirs.length === 0) {
+    console.error('No storage directories specified. Using default cache directory for backward compatibility.');
+    console.error('Usage: node abstract.js <dir1> [dir2] ...');
+  }
   
   // Load upstream server configurations
   const upstreamConfigs = await loadUpstreamConfigs();
@@ -37,16 +53,31 @@ async function main() {
         server: z.string().describe("The name of the upstream MCP server (e.g., 'tavily-mcp', 'filesystem')"),
         tool_name: z.string().describe("The name of the tool to call on the server (e.g., 'search', 'read_file', 'get_crypto_prices')"),
         tool_args: z.record(z.any()).optional().describe("The arguments object to pass to the upstream tool (e.g., {query: \"search term\"})"),
-        description: z.string().optional().describe("A brief description of what data is being retrieved (e.g., 'Bitcoin prices 2023-2024', 'Search results for AI companies')")
+        description: z.string().optional().describe("A brief description of what data is being retrieved (e.g., 'Bitcoin prices 2023-2024', 'Search results for AI companies')"),
+        storage_path: z.string().optional().describe("Directory path for storing response (must be within allowed directories). Defaults to first allowed directory if not specified.")
       }
     },
-    async ({ server, tool_name, tool_args = {}, description }) => {
+    async ({ server, tool_name, tool_args = {}, description, storage_path }) => {
       try {
+        // Determine target directory
+        let targetDir = storage_path || STORAGE_DIRS[0];
+        
+        // Validate storage path if provided
+        if (storage_path) {
+          if (!validatePath(storage_path, STORAGE_DIRS)) {
+            throw new Error(`Storage path ${storage_path} is not within allowed directories: ${STORAGE_DIRS.join(', ')}`);
+          }
+          if (!(await validateDirectory(storage_path))) {
+            throw new Error(`Storage directory ${storage_path} does not exist or is not writable`);
+          }
+          targetDir = storage_path;
+        }
+        
         // Attempt to call the upstream MCP tool
         const upstreamResponse = await callUpstreamTool(server, tool_name, tool_args, upstreamConfigs);
         
         const cacheData = createCacheData(`${server}:${tool_name}`, tool_args, upstreamResponse, description);
-        const file = generateCacheFilePath(CACHE_DIR);
+        const file = generateCacheFilePath(targetDir, STORAGE_DIRS);
         await fs.writeFile(file, JSON.stringify(cacheData, null, 2));
 
         const resourceLink = createResourceLink(file, cacheData, description || `Response from ${server}:${tool_name}`);
