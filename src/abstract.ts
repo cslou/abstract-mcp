@@ -7,9 +7,11 @@ import {
   loadUpstreamConfigs, 
   callUpstreamTool, 
   listAvailableTools,
+  getToolDetails,
   createCacheData,
   generateCacheFilePath,
-  createResourceLink
+  createResourceLink,
+  ToolInfo
 } from "./core.js";
 
 const CACHE_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../cache");
@@ -30,23 +32,24 @@ async function main() {
     "call_tool_and_store",
     {
       title: "Call Tool and Store",
-      description: "Calls any upstream MCP tool on your behalf, caches the full response to local storage, and returns only a compact resourceLink instead of the bulky payload. This prevents large datasets from bloating the conversation context. USE THIS TOOL when you expect a tool call to return large data that would consume excessive tokens. EXAMPLE: Instead of calling 'gordian:get_historical_crypto_prices' directly (which would return massive JSON), call call_tool_and_store with tool_name: 'gordian:get_historical_crypto_prices' and tool_args: {ticker: 'BTC-USD', start_date: '2023-01-01', end_date: '2024-01-01'}. You'll receive a file reference that can be accessed later via code execution tools without consuming context tokens.",
+      description: "Calls upstream MCP tools and caches responses to prevent context bloat. Returns a compact resource link instead of large payloads, keeping conversation context clean while preserving data access.\n\nCommon usage patterns:\n- Web search: {server: \"tavily-mcp\", tool_name: \"search\", tool_args: {query: \"AI news\"}}\n- File operations: {server: \"filesystem\", tool_name: \"read_file\", tool_args: {path: \"/path/to/file\"}}\n\nUse this when expecting large responses that would consume excessive context tokens. Note: make sure you know the input params before calling the tool. Do not ever guess.",
       inputSchema: {
-        tool_name: z.string().describe("The name of the upstream MCP tool to call (e.g., 'gordian:get_historical_crypto_prices', 'tavily:search', 'filesystem:read_file')"),
-        tool_args: z.record(z.any()).optional().describe("The arguments to pass to the upstream tool (e.g., {ticker: 'BTC-USD', start_date: '2023-01-01'})"),
+        server: z.string().describe("The name of the upstream MCP server (e.g., 'tavily-mcp', 'filesystem')"),
+        tool_name: z.string().describe("The name of the tool to call on the server (e.g., 'search', 'read_file', 'get_crypto_prices')"),
+        tool_args: z.record(z.any()).optional().describe("The arguments object to pass to the upstream tool (e.g., {query: \"search term\"})"),
         description: z.string().optional().describe("A brief description of what data is being retrieved (e.g., 'Bitcoin prices 2023-2024', 'Search results for AI companies')")
       }
     },
-    async ({ tool_name, tool_args = {}, description }) => {
+    async ({ server, tool_name, tool_args = {}, description }) => {
       try {
         // Attempt to call the upstream MCP tool
-        const upstreamResponse = await callUpstreamTool(tool_name, tool_args, upstreamConfigs);
+        const upstreamResponse = await callUpstreamTool(server, tool_name, tool_args, upstreamConfigs);
         
-        const cacheData = createCacheData(tool_name, tool_args, upstreamResponse, description);
+        const cacheData = createCacheData(`${server}:${tool_name}`, tool_args, upstreamResponse, description);
         const file = generateCacheFilePath(CACHE_DIR);
         await fs.writeFile(file, JSON.stringify(cacheData, null, 2));
 
-        const resourceLink = createResourceLink(file, cacheData, description || `Response from ${tool_name}`);
+        const resourceLink = createResourceLink(file, cacheData, description || `Response from ${server}:${tool_name}`);
 
         return {
           content: [
@@ -66,9 +69,10 @@ async function main() {
           content: [
             {
               type: "text",  
-              text: `Error calling ${tool_name}: ${errorMessage}\n\nTroubleshooting:\n1. Check that APP_CONFIG_PATH points to your MCP client config file\n2. Verify that '${tool_name.split(':')[0]}' is listed in ABSTRACT_PROXY_SERVERS\n3. Ensure the upstream server is properly configured in your MCP client\n4. Check console logs for more details`
+              text: `Error calling ${server}:${tool_name}: ${errorMessage}`
             }
-          ]
+          ],
+          isError: true
         };
       }
     }
@@ -79,20 +83,75 @@ async function main() {
     "list_available_tools",
     {
       title: "List Available Tools",
-      description: "Lists all available tools from configured upstream MCP servers. Use this to discover what tools you can call via call_tool_and_store.",
-      inputSchema: {}
+      description: "Discovers available tools from upstream MCP servers. Returns structured data for easy parsing.\n\nExamples:\n- Basic discovery: list_available_tools with {}\n- Detailed schemas: list_available_tools with {detailed: true}\n- Filter by server: list_available_tools with {filter_by_server: \"tavily-mcp\"}",
+      inputSchema: {
+        detailed: z.boolean().optional().describe("Include full input schemas when true (default: false)"),
+        filter_by_server: z.string().optional().describe("Restrict listing to one upstream server (e.g., 'tavily-mcp')")
+      }
     },
-    async () => {
-      const availableTools = await listAvailableTools(upstreamConfigs);
+    async ({ detailed, filter_by_server }) => {
+      const availableTools = await listAvailableTools(upstreamConfigs, { 
+        detailed: detailed || false, 
+        filterByServer: filter_by_server 
+      });
 
       return {
         content: [
           {
             type: "text",
-            text: `Available upstream tools:\n\n${availableTools.join('\n')}\n\nUse call_tool_and_store with tool_name like "servername:toolname" to call any of these tools.`
+            text: JSON.stringify(availableTools, null, 2)
           }
         ]
       };
+    }
+  );
+
+  // Tool to get detailed information for a specific tool
+  server.registerTool(
+    "list_tool_details",
+    {
+      title: "Get Tool Details",
+      description: "Get complete definition for a specific upstream tool including input schema.\n\nExample: list_tool_details with {server: \"tavily-mcp\", tool_name: \"search\"}",
+      inputSchema: {
+        server: z.string().describe("The upstream server name (e.g., 'tavily-mcp', 'gordian')"),
+        tool_name: z.string().describe("The name of the tool to inspect (e.g., 'search', 'get_crypto_prices')")
+      }
+    },
+    async ({ server, tool_name }) => {
+      try {
+        const toolDetails = await getToolDetails(server, tool_name, upstreamConfigs);
+        
+        if (!toolDetails) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Tool '${tool_name}' not found on server '${server}'`
+              }
+            ]
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(toolDetails, null, 2)
+            }
+          ]
+        };
+        
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting tool details: ${errorMessage}`
+            }
+          ]
+        };
+      }
     }
   );
 

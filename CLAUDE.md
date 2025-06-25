@@ -2,6 +2,17 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Todo
+- [x] Create initial tests 
+- [ ] Think through list_available_tools (see what is the response)
+- [ ] Determine where we should store the content
+- [ ] Convert to different files
+  - [ ] csv
+  - [ ] md
+  - [ ] etc
+- [ ] Must inform agent in description to add in file type based on available information
+- [ ] File system path connection
+
 ## Commands
 
 ### Build and Development
@@ -22,7 +33,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `tests/integration/` - Integration tests for MCP server
 - `tests/fixtures/` - Test data and mock configurations
 - `tests/helpers/` - Test utilities and mocks
-
 ## Architecture Overview
 
 **Abstract** is an MCP (Model Context Protocol) server that acts as a caching proxy for other MCP servers. It solves the problem of large tool responses consuming excessive context tokens by caching responses locally and returning compact resource links instead.
@@ -39,6 +49,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 2. **Configuration Discovery**: Reads existing MCP client config files to avoid duplication
 3. **Stdio Transport**: All MCP communication uses stdio JSON-RPC
 4. **Resource Links**: Returns file:// URIs instead of large data payloads
+5. **Structured APIs**: Tool discovery returns structured objects for reliable parsing
+6. **Selective Detail**: Two-tier discovery (basic/detailed) optimizes token usage
 
 ### Data Flow
 
@@ -63,7 +75,23 @@ The server automatically merges process.env with server-specific environment var
 ## Tools Provided
 
 - `call_tool_and_store`: Calls upstream tools and caches responses
-- `list_available_tools`: Discovers available tools from configured upstream servers
+- `list_available_tools`: Discovers available tools with structured output and filtering options
+- `list_tool_details`: Gets complete definition for a specific upstream tool
+
+### Tool Discovery API
+
+**`list_available_tools`** - Enhanced structured output:
+- Input: `{detailed?: boolean, filter_by_server?: string}`
+- Output: Array of `{server, tool, description, inputSchema?}` objects
+- Examples:
+  - Basic: `list_available_tools` with `{}`
+  - Detailed: `list_available_tools` with `{detailed: true}`
+  - Filtered: `list_available_tools` with `{filter_by_server: "tavily-mcp"}`
+
+**`list_tool_details`** - Single tool inspection:
+- Input: `{server: string, tool_name: string}`
+- Output: Complete tool definition with schema
+- Example: `list_tool_details` with `{server: "tavily-mcp", tool_name: "search"}`
 
 ## Development Notes
 

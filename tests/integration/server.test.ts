@@ -62,15 +62,15 @@ describe('Abstract MCP Server Integration', () => {
       version: "0.1.0"
     });
 
-    // Verify both tools were registered
-    expect(mockServer.registerTool).toHaveBeenCalledTimes(2);
+    // Verify all three tools were registered
+    expect(mockServer.registerTool).toHaveBeenCalledTimes(3);
     
     // Check first tool registration (call_tool_and_store)
     const firstCall = mockServer.registerTool.mock.calls[0];
     expect(firstCall[0]).toBe("call_tool_and_store");
     expect(firstCall[1]).toMatchObject({
       title: "Call Tool and Store",
-      description: expect.stringContaining("Calls any upstream MCP tool"),
+      description: expect.stringContaining("Calls upstream MCP tools"),
       inputSchema: expect.any(Object)
     });
     expect(firstCall[2]).toBeTypeOf('function');
@@ -80,10 +80,20 @@ describe('Abstract MCP Server Integration', () => {
     expect(secondCall[0]).toBe("list_available_tools");
     expect(secondCall[1]).toMatchObject({
       title: "List Available Tools",
-      description: expect.stringContaining("Lists all available tools"),
-      inputSchema: {}
+      description: expect.stringContaining("Discovers available tools"),
+      inputSchema: expect.any(Object)
     });
     expect(secondCall[2]).toBeTypeOf('function');
+
+    // Check third tool registration (list_tool_details)
+    const thirdCall = mockServer.registerTool.mock.calls[2];
+    expect(thirdCall[0]).toBe("list_tool_details");
+    expect(thirdCall[1]).toMatchObject({
+      title: "Get Tool Details",
+      description: expect.stringContaining("Get complete definition"),
+      inputSchema: expect.any(Object)
+    });
+    expect(thirdCall[2]).toBeTypeOf('function');
 
     // Verify server connection
     expect(mockServer.connect).toHaveBeenCalledWith(mockTransport);
@@ -97,7 +107,7 @@ describe('Abstract MCP Server Integration', () => {
 
   it('should verify tool registration structure', () => {
     // This test verifies the tools were registered with correct structure
-    expect(mockServer.registerTool).toHaveBeenCalledTimes(2);
+    expect(mockServer.registerTool).toHaveBeenCalledTimes(3);
     
     const calls = mockServer.registerTool.mock.calls;
     
@@ -109,6 +119,12 @@ describe('Abstract MCP Server Integration', () => {
     
     // Verify list_available_tools tool
     expect(calls[1][0]).toBe("list_available_tools");
-    expect(calls[1][1].inputSchema).toEqual({});
+    expect(calls[1][1].inputSchema).toHaveProperty('detailed');
+    expect(calls[1][1].inputSchema).toHaveProperty('filter_by_server');
+    
+    // Verify list_tool_details tool
+    expect(calls[2][0]).toBe("list_tool_details");
+    expect(calls[2][1].inputSchema).toHaveProperty('server');
+    expect(calls[2][1].inputSchema).toHaveProperty('tool_name');
   });
 });
