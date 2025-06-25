@@ -95,6 +95,27 @@ Abstract now stores responses in user-specified directories instead of a fixed c
 }
 ```
 
+### Custom Filename Usage
+
+```json
+{
+  "server": "tavily-mcp",
+  "tool_name": "search",
+  "tool_args": {"query": "bitcoin ETF flows", "max_results": 10},
+  "description": "Bitcoin ETF search results",
+  "filename": "bitcoin-etf-analysis"
+}
+```
+
+**Filename Options:**
+- **Custom**: Specify `filename` parameter (without extension)
+- **Default**: Auto-generated as `<server>-<tool>-<timestamp>`
+- **Extension**: Always `.json` (automatically added)
+
+**Examples:**
+- Custom: `bitcoin-etf-analysis.json`
+- Default: `tavily-mcp-search-2024-01-15T10-30-00-123Z.json`
+
 ### Tool Discovery
 
 ```json

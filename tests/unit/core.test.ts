@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { 
   createCacheData, 
   generateCacheFilePath, 
+  generateFilename,
   createResourceLink,
   validatePath,
   validateDirectory
@@ -43,8 +44,57 @@ describe('createCacheData', () => {
   });
 });
 
+describe('generateFilename', () => {
+  it('should return custom filename when provided', () => {
+    const result = generateFilename('tavily-mcp', 'search', 'my-custom-name');
+    expect(result).toBe('my-custom-name');
+  });
+
+  it('should generate timestamp-based filename when no custom name provided', () => {
+    const result = generateFilename('tavily-mcp', 'search');
+    
+    // Should match pattern: server-tool-timestamp
+    expect(result).toMatch(/^tavily-mcp-search-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z$/);
+  });
+
+  it('should generate different timestamps on multiple calls', () => {
+    const result1 = generateFilename('test-server', 'test-tool');
+    // Small delay to ensure different timestamp
+    const result2 = generateFilename('test-server', 'test-tool');
+    
+    // They should be different (unless called in exact same millisecond)
+    if (result1 === result2) {
+      // If same, wait a bit and try again
+      setTimeout(() => {
+        const result3 = generateFilename('test-server', 'test-tool');
+        expect(result3).not.toBe(result1);
+      }, 1);
+    } else {
+      expect(result1).not.toBe(result2);
+    }
+  });
+
+  it('should handle server and tool names with special characters', () => {
+    const result = generateFilename('test-server_v1', 'search-tool', 'safe_filename');
+    expect(result).toBe('safe_filename');
+  });
+
+  it('should create valid filenames for various server/tool combinations', () => {
+    const combinations = [
+      ['filesystem', 'read_file'],
+      ['tavily-mcp', 'search'],
+      ['gordian', 'get_crypto_prices']
+    ];
+
+    combinations.forEach(([server, tool]) => {
+      const result = generateFilename(server, tool);
+      expect(result).toMatch(new RegExp(`^${server}-${tool}-\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z$`));
+    });
+  });
+});
+
 describe('generateCacheFilePath', () => {
-  it('should generate a file path with UUID and .json extension', () => {
+  it('should generate a file path with UUID and .json extension when no filename provided', () => {
     const cacheDir = '/test/cache';
     
     const result = generateCacheFilePath(cacheDir);
@@ -52,7 +102,16 @@ describe('generateCacheFilePath', () => {
     expect(result).toMatch(/^\/test\/cache\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/);
   });
 
-  it('should generate different paths on multiple calls', () => {
+  it('should use custom filename when provided', () => {
+    const cacheDir = '/test/cache';
+    const customFilename = 'my-custom-file';
+    
+    const result = generateCacheFilePath(cacheDir, undefined, customFilename);
+    
+    expect(result).toBe('/test/cache/my-custom-file.json');
+  });
+
+  it('should generate different paths on multiple calls without filename', () => {
     const cacheDir = '/test/cache';
     
     const result1 = generateCacheFilePath(cacheDir);
@@ -76,6 +135,15 @@ describe('generateCacheFilePath', () => {
     
     const result = generateCacheFilePath(targetDir, allowedDirs);
     expect(result).toMatch(/^\/allowed\/path1\/subdir\/[0-9a-f-]+\.json$/);
+  });
+
+  it('should combine custom filename with directory validation', () => {
+    const targetDir = '/allowed/path1';
+    const allowedDirs = ['/allowed/path1', '/allowed/path2'];
+    const customFilename = 'validated-custom-file';
+    
+    const result = generateCacheFilePath(targetDir, allowedDirs, customFilename);
+    expect(result).toBe('/allowed/path1/validated-custom-file.json');
   });
 });
 

@@ -296,15 +296,23 @@ export function createCacheData(toolName: string, toolArgs: any, response: any, 
   };
 }
 
+// Function to generate filename with timestamp-based naming
+export function generateFilename(server: string, toolName: string, customName?: string): string {
+  if (customName) return customName;
+  
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${server}-${toolName}-${timestamp}`;
+}
+
 // Function to generate cache file path with directory validation
-export function generateCacheFilePath(targetDir: string, allowedDirs?: string[]): string {
+export function generateCacheFilePath(targetDir: string, allowedDirs?: string[], filename?: string): string {
   // If allowedDirs provided, validate the target directory
   if (allowedDirs && !validatePath(targetDir, allowedDirs)) {
     throw new Error(`Target directory ${targetDir} is not within allowed directories: ${allowedDirs.join(', ')}`);
   }
   
-  const id = uuid() + ".json";
-  return path.join(targetDir, id);
+  const finalFilename = filename ? `${filename}.json` : `${uuid()}.json`;
+  return path.join(targetDir, finalFilename);
 }
 
 // Function to create resource link

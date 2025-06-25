@@ -10,6 +10,7 @@ import {
   getToolDetails,
   createCacheData,
   generateCacheFilePath,
+  generateFilename,
   createResourceLink,
   validatePath,
   validateDirectory,
@@ -54,10 +55,11 @@ async function main() {
         tool_name: z.string().describe("The name of the tool to call on the server (e.g., 'search', 'read_file', 'get_crypto_prices')"),
         tool_args: z.record(z.any()).optional().describe("The arguments object to pass to the upstream tool (e.g., {query: \"search term\"})"),
         description: z.string().optional().describe("A brief description of what data is being retrieved (e.g., 'Bitcoin prices 2023-2024', 'Search results for AI companies')"),
-        storage_path: z.string().optional().describe("Directory path for storing response (must be within allowed directories). Defaults to first allowed directory if not specified.")
+        storage_path: z.string().optional().describe("Directory path for storing response (must be within allowed directories). Defaults to first allowed directory if not specified."),
+        filename: z.string().optional().describe("Custom filename (without extension). Defaults to <server>-<tool>-<timestamp>")
       }
     },
-    async ({ server, tool_name, tool_args = {}, description, storage_path }) => {
+    async ({ server, tool_name, tool_args = {}, description, storage_path, filename }) => {
       try {
         // Determine target directory
         let targetDir = storage_path || STORAGE_DIRS[0];
@@ -77,7 +79,10 @@ async function main() {
         const upstreamResponse = await callUpstreamTool(server, tool_name, tool_args, upstreamConfigs);
         
         const cacheData = createCacheData(`${server}:${tool_name}`, tool_args, upstreamResponse, description);
-        const file = generateCacheFilePath(targetDir, STORAGE_DIRS);
+        
+        // Generate filename (custom or default timestamp-based)
+        const generatedFilename = generateFilename(server, tool_name, filename);
+        const file = generateCacheFilePath(targetDir, STORAGE_DIRS, generatedFilename);
         await fs.writeFile(file, JSON.stringify(cacheData, null, 2));
 
         const resourceLink = createResourceLink(file, cacheData, description || `Response from ${server}:${tool_name}`);
