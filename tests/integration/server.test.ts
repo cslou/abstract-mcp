@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { tmpdir } from "node:os";
 import { mockEnvVars, getFixturePath } from '../helpers/test-utils.js';
 
 // Mock the modules
@@ -116,6 +117,7 @@ describe('Abstract MCP Server Integration', () => {
     expect(calls[0][1].inputSchema).toHaveProperty('tool_name');
     expect(calls[0][1].inputSchema).toHaveProperty('tool_args');
     expect(calls[0][1].inputSchema).toHaveProperty('description');
+    expect(calls[0][1].inputSchema).toHaveProperty('storage_path');
     
     // Verify list_available_tools tool
     expect(calls[1][0]).toBe("list_available_tools");
@@ -126,5 +128,26 @@ describe('Abstract MCP Server Integration', () => {
     expect(calls[2][0]).toBe("list_tool_details");
     expect(calls[2][1].inputSchema).toHaveProperty('server');
     expect(calls[2][1].inputSchema).toHaveProperty('tool_name');
+  });
+
+  describe('Directory Storage Integration', () => {
+    it('should verify storage_path parameter exists in tool schema', () => {
+      // Verify the call_tool_and_store tool was registered with storage_path parameter
+      const calls = mockServer.registerTool.mock.calls;
+      const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store');
+      
+      expect(callToolAndStoreCall).toBeDefined();
+      expect(callToolAndStoreCall[1].inputSchema).toHaveProperty('storage_path');
+    });
+
+    it('should backward compatibility still work without storage_path', () => {
+      // The current test setup already validates that the server works without
+      // storage_path parameter, which is backward compatibility
+      expect(mockServer.registerTool).toHaveBeenCalledTimes(3);
+      expect(fsMocks.mkdir).toHaveBeenCalledWith(
+        expect.stringContaining('cache'),
+        { recursive: true }
+      );
+    });
   });
 });

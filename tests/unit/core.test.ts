@@ -2,9 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { 
   createCacheData, 
   generateCacheFilePath, 
-  createResourceLink 
+  createResourceLink,
+  validatePath,
+  validateDirectory
 } from '../../src/core.js';
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 
 describe('createCacheData', () => {
   it('should create cache data with all fields', () => {
@@ -56,6 +60,23 @@ describe('generateCacheFilePath', () => {
     
     expect(result1).not.toBe(result2);
   });
+
+  it('should validate allowed directories when provided', () => {
+    const targetDir = '/some/path';
+    const allowedDirs = ['/allowed/path1', '/allowed/path2'];
+    
+    expect(() => {
+      generateCacheFilePath(targetDir, allowedDirs);
+    }).toThrow('Target directory /some/path is not within allowed directories');
+  });
+
+  it('should allow valid directory within allowed paths', () => {
+    const targetDir = '/allowed/path1/subdir';
+    const allowedDirs = ['/allowed/path1', '/allowed/path2'];
+    
+    const result = generateCacheFilePath(targetDir, allowedDirs);
+    expect(result).toMatch(/^\/allowed\/path1\/subdir\/[0-9a-f-]+\.json$/);
+  });
 });
 
 describe('createResourceLink', () => {
@@ -97,5 +118,75 @@ describe('createResourceLink', () => {
 
     const expectedBytes = Buffer.byteLength(JSON.stringify(data));
     expect(result.bytes).toBe(expectedBytes);
+  });
+});
+
+describe('validatePath', () => {
+  it('should allow paths within allowed directories', () => {
+    const allowedDirs = ['/allowed/path1', '/allowed/path2'];
+    
+    expect(validatePath('/allowed/path1/file.txt', allowedDirs)).toBe(true);
+    expect(validatePath('/allowed/path1/subdir/file.txt', allowedDirs)).toBe(true);
+    expect(validatePath('/allowed/path2', allowedDirs)).toBe(true);
+  });
+
+  it('should reject paths outside allowed directories', () => {
+    const allowedDirs = ['/allowed/path1', '/allowed/path2'];
+    
+    expect(validatePath('/forbidden/path', allowedDirs)).toBe(false);
+    expect(validatePath('/allowed', allowedDirs)).toBe(false);
+    expect(validatePath('/allowed/path3', allowedDirs)).toBe(false);
+  });
+
+  it('should handle path traversal attempts', () => {
+    const allowedDirs = ['/allowed/path1'];
+    
+    expect(validatePath('/allowed/path1/../../../etc/passwd', allowedDirs)).toBe(false);
+    expect(validatePath('/allowed/path1/../path2', allowedDirs)).toBe(false);
+  });
+
+  it('should handle relative paths', () => {
+    const allowedDirs = [path.resolve('./allowed')];
+    
+    expect(validatePath('./allowed/file.txt', allowedDirs)).toBe(true);
+    expect(validatePath('../forbidden', allowedDirs)).toBe(false);
+  });
+
+  it('should handle invalid paths gracefully', () => {
+    const allowedDirs = ['/allowed/path1'];
+    
+    expect(validatePath('', allowedDirs)).toBe(false);
+    expect(validatePath(null as any, allowedDirs)).toBe(false);
+  });
+});
+
+describe('validateDirectory', () => {
+  it('should validate existing writable directory', async () => {
+    const testDir = path.join(tmpdir(), 'abstract-test-' + Date.now());
+    await fs.mkdir(testDir, { recursive: true });
+    
+    const result = await validateDirectory(testDir);
+    expect(result).toBe(true);
+    
+    // Cleanup
+    await fs.rmdir(testDir);
+  });
+
+  it('should reject non-existent directory', async () => {
+    const nonExistentDir = '/definitely/does/not/exist';
+    
+    const result = await validateDirectory(nonExistentDir);
+    expect(result).toBe(false);
+  });
+
+  it('should reject file instead of directory', async () => {
+    const testFile = path.join(tmpdir(), 'abstract-test-file-' + Date.now());
+    await fs.writeFile(testFile, 'test');
+    
+    const result = await validateDirectory(testFile);
+    expect(result).toBe(false);
+    
+    // Cleanup
+    await fs.unlink(testFile);
   });
 });
