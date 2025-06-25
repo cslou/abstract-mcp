@@ -1,125 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { CallToolResultSchema, ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { v4 as uuid } from "uuid";
+import { 
+  loadUpstreamConfigs, 
+  callUpstreamTool, 
+  listAvailableTools,
+  createCacheData,
+  generateCacheFilePath,
+  createResourceLink
+} from "./core.js";
 
 const CACHE_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../cache");
 
-// Load upstream server configurations from MCP client config
-async function loadUpstreamConfigs(): Promise<Map<string, any>> {
-  const configs = new Map();
-  
-  // Get config file path from environment
-  const configPath = process.env.APP_CONFIG_PATH;
-  if (!configPath) {
-    console.error('No config file path specified. Set APP_CONFIG_PATH environment variable.');
-    console.error('Example: APP_CONFIG_PATH="/Users/you/Library/Application Support/Claude/claude_desktop_config.json"');
-    console.error('Or for Cursor: APP_CONFIG_PATH="/Users/you/.cursor/config.json"');
-    return configs;
-  }
-  
-  // Get list of servers to proxy from environment
-  const proxyServers = process.env.ABSTRACT_PROXY_SERVERS;
-  if (!proxyServers) {
-    console.error('No upstream servers configured. Set ABSTRACT_PROXY_SERVERS environment variable.');
-    console.error('Example: ABSTRACT_PROXY_SERVERS="tavily-mcp,gordian"');
-    return configs;
-  }
-  
-  const serverNames = proxyServers.split(',').map(s => s.trim()).filter(s => s);
-  
-  // Read MCP client config
-  try {
-    const configContent = await fs.readFile(configPath, 'utf-8');
-    const config = JSON.parse(configContent);
-    
-    // Support different config structures (Claude uses mcpServers, others might differ)
-    const mcpServers = config.mcpServers || config.mcp_servers || config.servers || {};
-    
-    if (Object.keys(mcpServers).length === 0) {
-      console.error('No MCP servers found in config file');
-      return configs;
-    }
-    
-    // Extract configurations for specified servers
-    for (const serverName of serverNames) {
-      if (mcpServers[serverName]) {
-        configs.set(serverName, mcpServers[serverName]);
-      } else {
-        console.error(`Warning: Server ${serverName} not found in config file`);
-      }
-    }
-    
-    console.error(`Loaded ${configs.size} upstream server configurations`);
-    
-  } catch (error) {
-    console.error(`Failed to read config from ${configPath}: ${error}`);
-    console.error('Make sure the config file exists and contains MCP server configurations');
-  }
-  
-  return configs;
-}
-
-// Function to call upstream MCP tools
-async function callUpstreamTool(toolName: string, toolArgs: any, upstreamConfigs: Map<string, any>): Promise<any> {
-  // Parse tool name to extract server and tool parts
-  const [serverName, actualToolName] = toolName.includes(':') 
-    ? toolName.split(':', 2)
-    : ['unknown', toolName];
-  
-  console.error(`Attempting to call tool: ${actualToolName} on server: ${serverName}`);
-  console.error(`Arguments:`, JSON.stringify(toolArgs, null, 2));
-  
-  const serverConfig = upstreamConfigs.get(serverName);
-  
-  if (!serverConfig) {
-    throw new Error(`Unknown upstream server: ${serverName}. Available servers: ${Array.from(upstreamConfigs.keys()).join(', ')}`);
-  }
-  
-  // Create a new MCP client to connect to the upstream server via stdio
-  const client = new Client({
-    name: "abstract-proxy-client",
-    version: "1.0.0"
-  }, {
-    capabilities: {}
-  });
-
-  // Merge environment variables: process.env + server-specific env
-  const mergedEnv = {
-    ...process.env,
-    ...(serverConfig.env || {})
-  };
-
-  const transport = new StdioClientTransport({
-    command: serverConfig.command,
-    args: serverConfig.args || [],
-    env: mergedEnv as Record<string, string>
-  });
-
-  try {
-    await client.connect(transport);
-    
-    const result = await client.request({
-      method: 'tools/call',
-      params: {
-        name: actualToolName,
-        arguments: toolArgs
-      }
-    }, CallToolResultSchema);
-
-    await client.close();
-    return result;
-    
-  } catch (error) {
-    await client.close();
-    throw error;
-  }
-}
 
 async function main() {
   await fs.mkdir(CACHE_DIR, { recursive: true });
@@ -148,29 +42,17 @@ async function main() {
         // Attempt to call the upstream MCP tool
         const upstreamResponse = await callUpstreamTool(tool_name, tool_args, upstreamConfigs);
         
-        const cacheData = {
-          tool_name,
-          tool_args,
-          response: upstreamResponse,
-          description: description || `Response from ${tool_name}`,
-          timestamp: new Date().toISOString(),
-          type: "upstream_tool_response"
-        };
-        
-        const id = uuid() + ".json";
-        const file = path.join(CACHE_DIR, id);
+        const cacheData = createCacheData(tool_name, tool_args, upstreamResponse, description);
+        const file = generateCacheFilePath(CACHE_DIR);
         await fs.writeFile(file, JSON.stringify(cacheData, null, 2));
+
+        const resourceLink = createResourceLink(file, cacheData, description || `Response from ${tool_name}`);
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                "@type": "resourceLink",
-                uri: `file://${file}`,
-                bytes: Buffer.byteLength(JSON.stringify(cacheData)),
-                description: description || `Response from ${tool_name}`
-              })
+              text: JSON.stringify(resourceLink)
             }
           ]
         };
@@ -201,50 +83,7 @@ async function main() {
       inputSchema: {}
     },
     async () => {
-      const availableTools: string[] = [];
-      
-      for (const [serverName, serverConfig] of upstreamConfigs.entries()) {
-        try {
-          // Try to connect to each server and get its tools
-          const client = new Client({
-            name: "abstract-discovery-client",
-            version: "1.0.0"
-          }, {
-            capabilities: {}
-          });
-
-          const mergedEnv = {
-            ...process.env,
-            ...(serverConfig.env || {})
-          };
-
-          const transport = new StdioClientTransport({
-            command: serverConfig.command,
-            args: serverConfig.args || [],
-            env: mergedEnv as Record<string, string>
-          });
-
-          await client.connect(transport);
-          
-          const toolsList = await client.request({
-            method: 'tools/list',
-            params: {}
-          }, ListToolsResultSchema);
-
-          await client.close();
-
-          // Add tools with server prefix
-          if (toolsList.tools) {
-            for (const tool of toolsList.tools) {
-              availableTools.push(`${serverName}:${tool.name} - ${tool.description || 'No description'}`);
-            }
-          }
-          
-        } catch (error) {
-          // If we can't connect to a server, note it
-          availableTools.push(`${serverName}: Error connecting (${error instanceof Error ? error.message : 'Unknown error'})`);
-        }
-      }
+      const availableTools = await listAvailableTools(upstreamConfigs);
 
       return {
         content: [
