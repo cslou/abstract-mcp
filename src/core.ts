@@ -61,19 +61,14 @@ export async function loadUpstreamConfigs(): Promise<Map<string, any>> {
 }
 
 // Function to call upstream MCP tools
-export async function callUpstreamTool(toolName: string, toolArgs: any, upstreamConfigs: Map<string, any>): Promise<any> {
-  // Parse tool name to extract server and tool parts
-  const [serverName, actualToolName] = toolName.includes(':') 
-    ? toolName.split(':', 2)
-    : ['unknown', toolName];
-  
-  console.error(`Attempting to call tool: ${actualToolName} on server: ${serverName}`);
+export async function callUpstreamTool(server: string, toolName: string, toolArgs: any, upstreamConfigs: Map<string, any>): Promise<any> {
+  console.error(`Attempting to call tool: ${toolName} on server: ${server}`);
   console.error(`Arguments:`, JSON.stringify(toolArgs, null, 2));
   
-  const serverConfig = upstreamConfigs.get(serverName);
+  const serverConfig = upstreamConfigs.get(server);
   
   if (!serverConfig) {
-    throw new Error(`Unknown upstream server: ${serverName}. Available servers: ${Array.from(upstreamConfigs.keys()).join(', ')}`);
+    throw new Error(`Unknown upstream server: ${server}. Available servers: ${Array.from(upstreamConfigs.keys()).join(', ')}`);
   }
   
   // Create a new MCP client to connect to the upstream server via stdio
@@ -102,7 +97,7 @@ export async function callUpstreamTool(toolName: string, toolArgs: any, upstream
     const result = await client.request({
       method: 'tools/call',
       params: {
-        name: actualToolName,
+        name: toolName,
         arguments: toolArgs
       }
     }, CallToolResultSchema);
@@ -116,11 +111,30 @@ export async function callUpstreamTool(toolName: string, toolArgs: any, upstream
   }
 }
 
+// Tool discovery result interface
+export interface ToolInfo {
+  server: string;
+  tool: string;
+  description: string;
+  inputSchema?: object;
+}
+
 // Function to get list of available tools from upstream servers
-export async function listAvailableTools(upstreamConfigs: Map<string, any>): Promise<string[]> {
-  const availableTools: string[] = [];
+export async function listAvailableTools(
+  upstreamConfigs: Map<string, any>, 
+  options: { detailed?: boolean; filterByServer?: string } = {}
+): Promise<ToolInfo[]> {
+  const { detailed = false, filterByServer } = options;
+  const availableTools: ToolInfo[] = [];
   
-  for (const [serverName, serverConfig] of upstreamConfigs.entries()) {
+  // Filter servers if specified
+  const serversToQuery = filterByServer 
+    ? upstreamConfigs.has(filterByServer) 
+      ? [[filterByServer, upstreamConfigs.get(filterByServer)]] 
+      : []
+    : Array.from(upstreamConfigs.entries());
+  
+  for (const [serverName, serverConfig] of serversToQuery) {
     try {
       // Try to connect to each server and get its tools
       const client = new Client({
@@ -150,20 +164,94 @@ export async function listAvailableTools(upstreamConfigs: Map<string, any>): Pro
 
       await client.close();
 
-      // Add tools with server prefix
+      // Add tools with structured format
       if (toolsList.tools) {
         for (const tool of toolsList.tools) {
-          availableTools.push(`${serverName}:${tool.name} - ${tool.description || 'No description'}`);
+          const toolInfo: ToolInfo = {
+            server: serverName,
+            tool: tool.name,
+            description: tool.description || 'No description'
+          };
+          
+          if (detailed && tool.inputSchema) {
+            toolInfo.inputSchema = tool.inputSchema;
+          }
+          
+          availableTools.push(toolInfo);
         }
       }
       
     } catch (error) {
-      // If we can't connect to a server, note it
-      availableTools.push(`${serverName}: Error connecting (${error instanceof Error ? error.message : 'Unknown error'})`);
+      // If we can't connect to a server, note it as an error entry
+      availableTools.push({
+        server: serverName,
+        tool: "ERROR",
+        description: `Error connecting: ${error instanceof Error ? error.message : 'Unknown error'}`
+      });
     }
   }
 
   return availableTools;
+}
+
+// Function to get detailed information for a specific tool
+export async function getToolDetails(
+  server: string, 
+  toolName: string, 
+  upstreamConfigs: Map<string, any>
+): Promise<ToolInfo | null> {
+  const serverConfig = upstreamConfigs.get(server);
+  
+  if (!serverConfig) {
+    throw new Error(`Unknown upstream server: ${server}. Available servers: ${Array.from(upstreamConfigs.keys()).join(', ')}`);
+  }
+
+  try {
+    const client = new Client({
+      name: "abstract-discovery-client",
+      version: "1.0.0"
+    }, {
+      capabilities: {}
+    });
+
+    const mergedEnv = {
+      ...process.env,
+      ...(serverConfig.env || {})
+    };
+
+    const transport = new StdioClientTransport({
+      command: serverConfig.command,
+      args: serverConfig.args || [],
+      env: mergedEnv as Record<string, string>
+    });
+
+    await client.connect(transport);
+    
+    const toolsList = await client.request({
+      method: 'tools/list',
+      params: {}
+    }, ListToolsResultSchema);
+
+    await client.close();
+
+    // Find the specific tool
+    if (toolsList.tools) {
+      const tool = toolsList.tools.find(t => t.name === toolName);
+      if (tool) {
+        return {
+          server,
+          tool: tool.name,
+          description: tool.description || 'No description',
+          inputSchema: tool.inputSchema
+        };
+      }
+    }
+    
+    return null;
+    
+  } catch (error) {
+    throw new Error(`Failed to get tool details from ${server}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+  }
 }
 
 // Function to create cache data
