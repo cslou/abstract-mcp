@@ -5,6 +5,36 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { v4 as uuid } from "uuid";
 
+// Directory validation function to prevent path traversal attacks
+export function validatePath(targetPath: string, allowedDirs: string[]): boolean {
+  try {
+    const resolved = path.resolve(targetPath);
+    return allowedDirs.some(dir => {
+      const allowedDir = path.resolve(dir);
+      return resolved.startsWith(allowedDir + path.sep) || resolved === allowedDir;
+    });
+  } catch {
+    return false;
+  }
+}
+
+// Check if directory exists and is writable
+export async function validateDirectory(dirPath: string): Promise<boolean> {
+  try {
+    const stats = await fs.stat(dirPath);
+    if (!stats.isDirectory()) {
+      return false;
+    }
+    // Try to write a test file to check permissions
+    const testFile = path.join(dirPath, '.write-test');
+    await fs.writeFile(testFile, '');
+    await fs.unlink(testFile);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Load upstream server configurations from MCP client config
 export async function loadUpstreamConfigs(): Promise<Map<string, any>> {
   const configs = new Map();
@@ -266,10 +296,23 @@ export function createCacheData(toolName: string, toolArgs: any, response: any, 
   };
 }
 
-// Function to generate cache file path
-export function generateCacheFilePath(cacheDir: string): string {
-  const id = uuid() + ".json";
-  return path.join(cacheDir, id);
+// Function to generate filename with timestamp-based naming
+export function generateFilename(server: string, toolName: string, customName?: string): string {
+  if (customName) return customName;
+  
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${server}-${toolName}-${timestamp}`;
+}
+
+// Function to generate cache file path with directory validation
+export function generateCacheFilePath(targetDir: string, allowedDirs?: string[], filename?: string): string {
+  // If allowedDirs provided, validate the target directory
+  if (allowedDirs && !validatePath(targetDir, allowedDirs)) {
+    throw new Error(`Target directory ${targetDir} is not within allowed directories: ${allowedDirs.join(', ')}`);
+  }
+  
+  const finalFilename = filename ? `${filename}.json` : `${uuid()}.json`;
+  return path.join(targetDir, finalFilename);
 }
 
 // Function to create resource link
