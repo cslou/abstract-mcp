@@ -63,8 +63,8 @@ describe('Abstract MCP Server Integration', () => {
       version: "0.1.0"
     });
 
-    // Verify all three tools were registered
-    expect(mockServer.registerTool).toHaveBeenCalledTimes(3);
+    // Verify all four tools were registered
+    expect(mockServer.registerTool).toHaveBeenCalledTimes(4);
     
     // Check first tool registration (call_tool_and_store)
     const firstCall = mockServer.registerTool.mock.calls[0];
@@ -96,6 +96,16 @@ describe('Abstract MCP Server Integration', () => {
     });
     expect(thirdCall[2]).toBeTypeOf('function');
 
+    // Check fourth tool registration (list_allowed_directories)
+    const fourthCall = mockServer.registerTool.mock.calls[3];
+    expect(fourthCall[0]).toBe("list_allowed_directories");
+    expect(fourthCall[1]).toMatchObject({
+      title: "List Allowed Storage Directories",
+      description: expect.stringContaining("Lists all directories"),
+      inputSchema: {}
+    });
+    expect(fourthCall[2]).toBeTypeOf('function');
+
     // Verify server connection
     expect(mockServer.connect).toHaveBeenCalledWith(mockTransport);
 
@@ -108,7 +118,7 @@ describe('Abstract MCP Server Integration', () => {
 
   it('should verify tool registration structure', () => {
     // This test verifies the tools were registered with correct structure
-    expect(mockServer.registerTool).toHaveBeenCalledTimes(3);
+    expect(mockServer.registerTool).toHaveBeenCalledTimes(4);
     
     const calls = mockServer.registerTool.mock.calls;
     
@@ -128,6 +138,10 @@ describe('Abstract MCP Server Integration', () => {
     expect(calls[2][0]).toBe("list_tool_details");
     expect(calls[2][1].inputSchema).toHaveProperty('server');
     expect(calls[2][1].inputSchema).toHaveProperty('tool_name');
+    
+    // Verify list_allowed_directories tool
+    expect(calls[3][0]).toBe("list_allowed_directories");
+    expect(calls[3][1].inputSchema).toEqual({});
   });
 
   describe('Directory Storage Integration', () => {
@@ -143,7 +157,7 @@ describe('Abstract MCP Server Integration', () => {
     it('should backward compatibility still work without storage_path', () => {
       // The current test setup already validates that the server works without
       // storage_path parameter, which is backward compatibility
-      expect(mockServer.registerTool).toHaveBeenCalledTimes(3);
+      expect(mockServer.registerTool).toHaveBeenCalledTimes(4);
       expect(fsMocks.mkdir).toHaveBeenCalledWith(
         expect.stringContaining('cache'),
         { recursive: true }

@@ -186,6 +186,29 @@ async function main() {
     }
   );
 
+  server.registerTool(
+    "list_allowed_directories",
+    {
+      title: "List Allowed Storage Directories",
+      description: "Lists all directories that Abstract is allowed to store responses in. These directories are specified via command line arguments when the server starts.",
+      inputSchema: {}
+    },
+    async () => {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              allowed_directories: STORAGE_DIRS,
+              default_directory: STORAGE_DIRS[0],
+              total_directories: STORAGE_DIRS.length
+            }, null, 2)
+          }
+        ]
+      };
+    }
+  );
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

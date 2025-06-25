@@ -57,11 +57,12 @@ Abstract reads this config file to find the settings for servers listed in `ABST
 
 ## Usage
 
-Abstract provides three tools:
+Abstract provides four tools:
 
 - `call_tool_and_store` - Calls upstream tools and caches responses to specified directories
 - `list_available_tools` - Lists all available upstream tools with filtering options
 - `list_tool_details` - Gets complete definition for a specific upstream tool
+- `list_allowed_directories` - Lists all directories that Abstract is allowed to store responses in
 
 ## Directory-Based Storage
 
@@ -105,6 +106,25 @@ Abstract now stores responses in user-specified directories instead of a fixed c
 
 // Filter by specific server
 {"filter_by_server": "tavily-mcp"}
+```
+
+### Directory Discovery
+
+```json
+// List allowed storage directories (no parameters needed)
+{}
+```
+
+Example response:
+```json
+{
+  "allowed_directories": [
+    "/path/to/allowed/storage/dir1",
+    "/path/to/allowed/storage/dir2"
+  ],
+  "default_directory": "/path/to/allowed/storage/dir1",
+  "total_directories": 2
+}
 ```
 
 The tool returns a compact resource link instead of the full response, keeping your context window clean.
