@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "test-server": {
+      "command": "node",
+      "args": ["/fake/path/server.js"],
+      "env": {
+        "TEST_API_KEY": "test-key-123"
+      }
+    },
+    "another-server": {
+      "command": "npx",
+      "args": ["-y", "another-mcp@latest"],
+      "env": {
+        "ANOTHER_API_KEY": "another-key-456"
+      }
+    }
+  }
+}
