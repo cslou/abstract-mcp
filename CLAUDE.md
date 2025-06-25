@@ -4,14 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Todo
 - [x] Create initial tests 
-- [ ] Think through list_available_tools (see what is the response)
+- [x] Think through list_available_tools (see what is the response)
 - [ ] Determine where we should store the content
 - [ ] Convert to different files
   - [ ] csv
   - [ ] md
   - [ ] etc
 - [ ] Must inform agent in description to add in file type based on available information
-- [ ] File system path connection
+- [ ] publish to npm
 
 ## Commands
 
