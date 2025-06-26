@@ -296,6 +296,239 @@ export function createCacheData(toolName: string, toolArgs: any, response: any, 
   };
 }
 
+// Function to extract actual content from MCP JSON wrapper
+export function extractActualContent(response: any): any {
+  // Handle MCP content wrapper structure
+  if (response?.content && Array.isArray(response.content)) {
+    if (response.content.length === 1 && response.content[0].type === 'text') {
+      const textContent = response.content[0].text;
+      
+      // Try to parse as JSON if it looks like structured data
+      try {
+        return JSON.parse(textContent);
+      } catch {
+        // Return as plain text if not JSON
+        return textContent;
+      }
+    }
+    
+    // Multiple content items - return the content array
+    return response.content;
+  }
+  
+  // Already clean data (non-MCP response)
+  return response;
+}
+
+// Function to extract and convert content based on target format
+export function extractContent(response: any, format: string = 'json'): string {
+  // Step 1: Extract actual content from MCP wrapper
+  const actualContent = extractActualContent(response);
+  
+  // Step 2: Convert to requested format (default to clean JSON)
+  switch (format) {
+    case 'json':
+      // Clean JSON without MCP metadata wrapper
+      return JSON.stringify(actualContent, null, 2);
+    
+    case 'txt':
+    case 'md':
+      // Convert to plain text
+      if (typeof actualContent === 'string') {
+        return actualContent;
+      }
+      // Fallback to JSON string for complex objects
+      return JSON.stringify(actualContent, null, 2);
+    
+    case 'html':
+      return extractHtmlContent(actualContent);
+    
+    case 'csv':
+      // Convert to CSV - only works for tabular data
+      if (Array.isArray(actualContent) && actualContent.length > 0 && 
+          typeof actualContent[0] === 'object' && actualContent[0] !== null &&
+          !Array.isArray(actualContent[0])) {
+        return convertArrayToCSV(actualContent);
+      }
+      // Fallback: if not tabular, store as JSON with warning
+      console.warn('Content is not tabular data, storing as JSON with .csv extension');
+      return JSON.stringify(actualContent, null, 2);
+    
+    case 'tsv':
+      // Convert to TSV - only works for tabular data
+      if (Array.isArray(actualContent) && actualContent.length > 0 && 
+          typeof actualContent[0] === 'object' && actualContent[0] !== null &&
+          !Array.isArray(actualContent[0])) {
+        return convertArrayToTSV(actualContent);
+      }
+      // Fallback: if not tabular, store as JSON with warning
+      console.warn('Content is not tabular data, storing as JSON with .tsv extension');
+      return JSON.stringify(actualContent, null, 2);
+    
+    case 'yaml':
+      return extractYamlContent(actualContent);
+    
+    case 'xml':
+      return extractXmlContent(actualContent);
+    
+    default:
+      // Unknown format - default to JSON
+      console.warn(`Unknown format '${format}', defaulting to JSON`);
+      return JSON.stringify(actualContent, null, 2);
+  }
+}
+
+// Helper function to convert array of objects to CSV
+function convertArrayToCSV(data: any[]): string {
+  if (!Array.isArray(data) || data.length === 0) return '';
+  
+  const headers = Object.keys(data[0]);
+  const csvRows = [
+    headers.join(','),
+    ...data.map(row => 
+      headers.map(header => {
+        const value = row[header];
+        const stringValue = value !== null && value !== undefined ? String(value) : '';
+        // Escape commas and quotes properly
+        return stringValue.includes(',') || stringValue.includes('"') 
+          ? `"${stringValue.replace(/"/g, '""')}"` 
+          : stringValue;
+      }).join(',')
+    )
+  ];
+  return csvRows.join('\n');
+}
+
+// Helper function to convert array of objects to TSV
+function convertArrayToTSV(data: any[]): string {
+  if (!Array.isArray(data) || data.length === 0) return '';
+  
+  const headers = Object.keys(data[0]);
+  const tsvRows = [
+    headers.join('\t'),
+    ...data.map(row => 
+      headers.map(header => {
+        const value = row[header];
+        return value !== null && value !== undefined ? String(value) : '';
+      }).join('\t')
+    )
+  ];
+  return tsvRows.join('\n');
+}
+
+// Helper function to extract HTML content
+function extractHtmlContent(actualContent: any): string {
+  // Convert to string representation
+  const textContent = typeof actualContent === 'string' 
+    ? actualContent 
+    : JSON.stringify(actualContent, null, 2);
+  
+  // If it's already HTML, return as-is
+  if (textContent.includes('<html') || textContent.includes('<!DOCTYPE') || 
+      (textContent.includes('<') && textContent.includes('>'))) {
+    return textContent;
+  }
+  
+  // Otherwise wrap in basic HTML structure
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>Response</title>
+</head>
+<body>
+<pre>${textContent}</pre>
+</body>
+</html>`;
+}
+
+
+
+// Helper function to extract YAML content
+function extractYamlContent(actualContent: any): string {
+  // Simple YAML conversion for objects
+  if (typeof actualContent === 'object' && actualContent !== null) {
+    return convertToYaml(actualContent, 0);
+  }
+  
+  // If it's a string and already YAML-like, return as-is
+  if (typeof actualContent === 'string' && 
+      (actualContent.includes(':\n') || actualContent.includes(': '))) {
+    return actualContent;
+  }
+  
+  // Convert to string representation
+  return typeof actualContent === 'string' 
+    ? actualContent 
+    : JSON.stringify(actualContent, null, 2);
+}
+
+// Helper function to convert object to YAML
+function convertToYaml(obj: any, indent: number = 0): string {
+  const spaces = '  '.repeat(indent);
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => `${spaces}- ${convertToYaml(item, indent + 1).trim()}`).join('\n');
+  }
+  
+  if (typeof obj === 'object' && obj !== null) {
+    return Object.entries(obj)
+      .map(([key, value]) => {
+        if (typeof value === 'object' && value !== null) {
+          return `${spaces}${key}:\n${convertToYaml(value, indent + 1)}`;
+        }
+        return `${spaces}${key}: ${value}`;
+      })
+      .join('\n');
+  }
+  
+  return String(obj);
+}
+
+// Helper function to extract XML content
+function extractXmlContent(actualContent: any): string {
+  // Convert to string representation first
+  const textContent = typeof actualContent === 'string' 
+    ? actualContent 
+    : JSON.stringify(actualContent, null, 2);
+  
+  // If it's already XML, return as-is
+  if (textContent.startsWith('<?xml') || 
+      (textContent.includes('<') && textContent.includes('</'))) {
+    return textContent;
+  }
+  
+  // Simple XML conversion for objects
+  if (typeof actualContent === 'object' && actualContent !== null) {
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<root>\n${convertToXml(actualContent, 1)}\n</root>`;
+  }
+  
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<root>${textContent}</root>`;
+}
+
+// Helper function to convert object to XML
+function convertToXml(obj: any, indent: number = 0): string {
+  const spaces = '  '.repeat(indent);
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => `${spaces}<item>${convertToXml(item, 0)}</item>`).join('\n');
+  }
+  
+  if (typeof obj === 'object' && obj !== null) {
+    return Object.entries(obj)
+      .map(([key, value]) => {
+        if (typeof value === 'object' && value !== null) {
+          return `${spaces}<${key}>\n${convertToXml(value, indent + 1)}\n${spaces}</${key}>`;
+        }
+        return `${spaces}<${key}>${value}</${key}>`;
+      })
+      .join('\n');
+  }
+  
+  return String(obj);
+}
+
+
+
 // Function to generate filename with timestamp-based naming
 export function generateFilename(server: string, toolName: string, customName?: string): string {
   if (customName) return customName;
@@ -304,14 +537,30 @@ export function generateFilename(server: string, toolName: string, customName?: 
   return `${server}-${toolName}-${timestamp}`;
 }
 
+// Function to get file extension for format
+export function getFileExtension(format: string): string {
+  switch (format) {
+    case 'csv': return '.csv';
+    case 'tsv': return '.tsv';
+    case 'md': return '.md';
+    case 'txt': return '.txt';
+    case 'html': return '.html';
+    case 'yaml': return '.yaml';
+    case 'xml': return '.xml';
+    case 'json':
+    default: return '.json';
+  }
+}
+
 // Function to generate cache file path with directory validation
-export function generateCacheFilePath(targetDir: string, allowedDirs?: string[], filename?: string): string {
+export function generateCacheFilePath(targetDir: string, allowedDirs?: string[], filename?: string, format?: string): string {
   // If allowedDirs provided, validate the target directory
   if (allowedDirs && !validatePath(targetDir, allowedDirs)) {
     throw new Error(`Target directory ${targetDir} is not within allowed directories: ${allowedDirs.join(', ')}`);
   }
   
-  const finalFilename = filename ? `${filename}.json` : `${uuid()}.json`;
+  const extension = getFileExtension(format || 'json');
+  const finalFilename = filename ? `${filename}${extension}` : `${uuid()}${extension}`;
   return path.join(targetDir, finalFilename);
 }
 

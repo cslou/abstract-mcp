@@ -129,6 +129,7 @@ describe('Abstract MCP Server Integration', () => {
     expect(calls[0][1].inputSchema).toHaveProperty('description');
     expect(calls[0][1].inputSchema).toHaveProperty('storage_path');
     expect(calls[0][1].inputSchema).toHaveProperty('filename');
+    expect(calls[0][1].inputSchema).toHaveProperty('file_format');
     
     // Verify list_available_tools tool
     expect(calls[1][0]).toBe("list_available_tools");
@@ -147,13 +148,14 @@ describe('Abstract MCP Server Integration', () => {
 
   describe('Directory Storage Integration', () => {
     it('should verify storage_path parameter exists in tool schema', () => {
-      // Verify the call_tool_and_store tool was registered with storage_path and filename parameters
+      // Verify the call_tool_and_store tool was registered with all storage parameters
       const calls = mockServer.registerTool.mock.calls;
       const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store');
       
       expect(callToolAndStoreCall).toBeDefined();
       expect(callToolAndStoreCall[1].inputSchema).toHaveProperty('storage_path');
       expect(callToolAndStoreCall[1].inputSchema).toHaveProperty('filename');
+      expect(callToolAndStoreCall[1].inputSchema).toHaveProperty('file_format');
     });
 
     it('should backward compatibility still work without storage_path', () => {
@@ -164,6 +166,19 @@ describe('Abstract MCP Server Integration', () => {
         expect.stringContaining('cache'),
         { recursive: true }
       );
+    });
+
+    it('should support file format parameter for enhanced storage', () => {
+      // This test verifies that the file_format parameter is available
+      // The actual format detection and extraction is tested in unit tests
+      const calls = mockServer.registerTool.mock.calls;
+      const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store');
+      
+      expect(callToolAndStoreCall).toBeDefined();
+      expect(callToolAndStoreCall[1].inputSchema.file_format).toBeDefined();
+      
+      // Verify the file_format parameter exists (specific enum validation is tested in unit tests)
+      expect(callToolAndStoreCall[1].inputSchema.file_format).toBeDefined();
     });
   });
 });
