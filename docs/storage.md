@@ -15,7 +15,27 @@ The abstract MCP server currently stores all tool responses in a fixed `cache/` 
 4. **Non-Intuitive Organization**: UUID filenames provide no semantic meaning
 5. **Mixed Content Types**: All responses stored as JSON regardless of original format
 
-## Proposed Solution: Directory-Based Storage
+## Key Insight: MCP Responses Are Always JSON
+
+**Critical Understanding**: All MCP tool responses follow JSON-RPC 2.0 format and are structured as JSON objects with content wrappers:
+
+```json
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "actual data here (may be JSON string, CSV text, etc.)"
+    }
+  ]
+}
+```
+
+This means:
+- **Default behavior**: Store clean JSON (remove MCP wrapper, keep actual content)
+- **Format conversion**: When user specifies `file_format`, they want conversion FROM JSON TO that format
+- **No auto-detection**: Since source is always JSON, format selection is about desired output conversion
+
+## Proposed Solution: Directory-Based Storage with Smart Format Conversion
 
 ### Follow Filesystem MCP Pattern
 
@@ -105,7 +125,7 @@ server.registerTool(
       // New storage parameters
       storage_path: z.string().optional().describe("Directory path for storing response (must be within allowed directories)"),
       filename: z.string().optional().describe("Custom filename (without extension). Defaults to <server>-<tool>-<timestamp>"),
-      file_format: z.enum(["json", "txt", "md", "csv"]).optional().describe("Output format. Auto-detected from response content if not specified")
+      file_format: z.enum(["json", "txt", "md", "csv", "yaml", "xml"]).optional().describe("Output format for CONVERSION from JSON. Defaults to clean JSON if not specified. Other formats will attempt conversion from MCP JSON response.")
     }
   }
 )
@@ -140,22 +160,33 @@ server.registerTool(
 );
 ```
 
-### 5. Content-Aware Storage
+### 5. Content-Aware Storage with Format Conversion
 
-Implement intelligent storage based on response content:
+Since MCP responses are always JSON, implement smart content extraction and format conversion:
 
 ```typescript
-function determineFileFormat(response: any, requestedFormat?: string): string {
-  if (requestedFormat) return requestedFormat;
-  
-  // Auto-detect based on content
-  if (typeof response === 'string') {
-    if (response.includes('```') || response.includes('#')) return 'md';
-    if (response.includes(',') && response.includes('\n')) return 'csv';
-    return 'txt';
+// First, extract actual content from MCP JSON wrapper
+function extractActualContent(response: any): any {
+  // Handle MCP content wrapper structure
+  if (response?.content && Array.isArray(response.content)) {
+    if (response.content.length === 1 && response.content[0].type === 'text') {
+      const textContent = response.content[0].text;
+      
+      // Try to parse as JSON if it looks like structured data
+      try {
+        return JSON.parse(textContent);
+      } catch {
+        // Return as plain text if not JSON
+        return textContent;
+      }
+    }
+    
+    // Multiple content items - return the content array
+    return response.content;
   }
   
-  return 'json'; // Default for complex objects
+  // Already clean data (non-MCP response)
+  return response;
 }
 
 function generateFilename(server: string, toolName: string, customName?: string): string {
@@ -165,27 +196,68 @@ function generateFilename(server: string, toolName: string, customName?: string)
   return `${server}-${toolName}-${timestamp}`;
 }
 
-function extractContent(response: any, format: string): string {
+function extractAndConvertContent(response: any, format: string = 'json'): string {
+  // Step 1: Extract actual content from MCP wrapper
+  const actualContent = extractActualContent(response);
+  
+  // Step 2: Convert to requested format (default to clean JSON)
   switch (format) {
+    case 'json':
+      // Clean JSON without MCP metadata wrapper
+      return JSON.stringify(actualContent, null, 2);
+    
     case 'txt':
     case 'md':
-      // Extract text content from response
-      if (response.content && Array.isArray(response.content)) {
-        return response.content
-          .filter(item => item.type === 'text')
-          .map(item => item.text)
-          .join('\n');
+      // Convert to plain text
+      if (typeof actualContent === 'string') {
+        return actualContent;
       }
-      return typeof response === 'string' ? response : JSON.stringify(response, null, 2);
+      // Fallback to JSON string for complex objects
+      return JSON.stringify(actualContent, null, 2);
     
     case 'csv':
-      // Handle CSV extraction from structured data
-      return convertToCSV(response);
+      // Convert to CSV - only works for tabular data
+      if (Array.isArray(actualContent) && actualContent.length > 0 && 
+          typeof actualContent[0] === 'object' && actualContent[0] !== null) {
+        return convertArrayToCSV(actualContent);
+      }
+      // Fallback: if not tabular, store as JSON with .csv extension
+      console.warn('Content is not tabular data, storing as JSON with .csv extension');
+      return JSON.stringify(actualContent, null, 2);
     
-    case 'json':
+    case 'yaml':
+      // Convert to YAML format
+      return convertToYAML(actualContent);
+    
+    case 'xml':
+      // Convert to XML format  
+      return convertToXML(actualContent);
+    
     default:
-      return JSON.stringify(response, null, 2);
+      // Unknown format - default to JSON
+      return JSON.stringify(actualContent, null, 2);
   }
+}
+
+// Helper function to convert array of objects to CSV
+function convertArrayToCSV(data: any[]): string {
+  if (!Array.isArray(data) || data.length === 0) return '';
+  
+  const headers = Object.keys(data[0]);
+  const csvRows = [
+    headers.join(','),
+    ...data.map(row => 
+      headers.map(header => {
+        const value = row[header];
+        const stringValue = value !== null && value !== undefined ? String(value) : '';
+        // Escape commas and quotes properly
+        return stringValue.includes(',') || stringValue.includes('"') 
+          ? `"${stringValue.replace(/"/g, '""')}"` 
+          : stringValue;
+      }).join(',')
+    )
+  ];
+  return csvRows.join('\n');
 }
 ```
 
@@ -256,10 +328,11 @@ Update your MCP configuration:
 - Format-appropriate file extensions
 - Directory-based organization
 
-### 3. Reduced Bloat
-- Store only response content, not metadata
-- Smaller file sizes
-- Format-appropriate storage (CSV for tabular data, MD for documentation, etc.)
+### 3. Smart Content Processing
+- Extract actual content from MCP JSON wrapper
+- Store clean data without metadata bloat
+- Intelligent format conversion (JSON→CSV, JSON→YAML, etc.)
+- Fallback handling when conversion isn't possible
 
 ### 4. Security
 - Sandboxed to specified directories only

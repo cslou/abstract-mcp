@@ -11,6 +11,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - [ ] md
   - [ ] etc
 - [ ] Must inform agent in description to add in file type based on available information
+- [ ] Call tool and upload from file (E.g. for endpoints that requests a json or txt)
 - [ ] publish to npm
 
 ## Commands

@@ -107,14 +107,37 @@ Abstract now stores responses in user-specified directories instead of a fixed c
 }
 ```
 
-**Filename Options:**
-- **Custom**: Specify `filename` parameter (without extension)
-- **Default**: Auto-generated as `<server>-<tool>-<timestamp>`
-- **Extension**: Always `.json` (automatically added)
+### File Format Support
+
+```json
+{
+  "server": "tavily-mcp",
+  "tool_name": "search",
+  "tool_args": {"query": "bitcoin ETF flows", "max_results": 10},
+  "description": "Bitcoin ETF search results",
+  "file_format": "csv"
+}
+```
+
+**Supported Formats:**
+- **json**: Structured data (default)
+- **csv**: Tabular data for analysis
+- **md**: Markdown for documentation
+- **txt**: Plain text, universal format
+- **html**: Web content, formatted output
+- **yaml**: Configuration files, structured data
+- **xml**: API responses, structured markup
+- **tsv**: Tab-separated values
+
+**Format Detection:**
+- **Manual**: Specify `file_format` parameter
+- **Auto-detect**: Smart detection based on content patterns
+- **Content Extraction**: Stores clean content without metadata bloat
 
 **Examples:**
-- Custom: `bitcoin-etf-analysis.json`
-- Default: `tavily-mcp-search-2024-01-15T10-30-00-123Z.json`
+- Custom filename: `bitcoin-etf-analysis.csv`
+- Auto-detected: `tavily-mcp-search-2024-01-15T10-30-00-123Z.md`
+- Manual format: `data-export.yaml`
 
 ### Tool Discovery
 
