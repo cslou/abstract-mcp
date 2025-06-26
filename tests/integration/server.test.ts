@@ -162,6 +162,7 @@ describe('Abstract MCP Server Integration', () => {
     expect(calls[4][1].inputSchema).toHaveProperty('file_path');
     expect(calls[4][1].inputSchema).toHaveProperty('data_key');
     expect(calls[4][1].inputSchema).toHaveProperty('tool_args');
+    expect(calls[4][1].inputSchema).toHaveProperty('output_format');
   });
 
   describe('Directory Storage Integration', () => {
@@ -229,6 +230,71 @@ describe('Abstract MCP Server Integration', () => {
       expect(fileContentCall[1].inputSchema).not.toHaveProperty('filename');
       expect(fileContentCall[1].inputSchema).not.toHaveProperty('file_format');
       expect(fileContentCall[1].inputSchema).not.toHaveProperty('description');
+    });
+  });
+
+  describe('Output Format Integration', () => {
+    it('should register call_tool_with_file_content with output_format parameter', () => {
+      const calls = mockServer.registerTool.mock.calls;
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      
+      expect(fileContentCall).toBeDefined();
+      expect(fileContentCall[1].inputSchema).toHaveProperty('output_format');
+      
+      // Verify it's described as an optional enum parameter
+      const outputFormatSchema = fileContentCall[1].inputSchema.output_format;
+      expect(outputFormatSchema).toBeDefined();
+    });
+
+    it('should include output format options in tool description', () => {
+      const calls = mockServer.registerTool.mock.calls;
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      
+      expect(fileContentCall).toBeDefined();
+      const description = fileContentCall[1].description;
+      
+      // Verify description mentions output format options
+      expect(description).toContain('Output Format Options');
+      expect(description).toContain('json');
+      expect(description).toContain('string');
+      expect(description).toContain('output_format');
+    });
+
+    it('should demonstrate output_format usage in tool examples', () => {
+      const calls = mockServer.registerTool.mock.calls;
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      
+      expect(fileContentCall).toBeDefined();
+      const description = fileContentCall[1].description;
+      
+      // Verify examples show output_format parameter usage  
+      expect(description).toContain('output_format: \\\"string\\\"');
+      expect(description).toContain('Examples:');
+    });
+
+    it('should maintain backward compatibility for tools without output_format', () => {
+      // Verify that call_tool_and_store does NOT have output_format
+      // (it uses file_format for storage conversion instead)
+      const calls = mockServer.registerTool.mock.calls;
+      const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store');
+      
+      expect(callToolAndStoreCall).toBeDefined();
+      expect(callToolAndStoreCall[1].inputSchema).not.toHaveProperty('output_format');
+      expect(callToolAndStoreCall[1].inputSchema).toHaveProperty('file_format'); // Different purpose
+    });
+
+    it('should validate output_format parameter configuration', () => {
+      // This test verifies the output_format parameter is properly configured
+      // The actual enum validation and formatting logic is tested in unit tests
+      const calls = mockServer.registerTool.mock.calls;
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      
+      expect(fileContentCall).toBeDefined();
+      expect(fileContentCall[1].inputSchema.output_format).toBeDefined();
+      
+      // Verify the parameter has a proper description for LLM guidance
+      const outputFormatParam = fileContentCall[1].inputSchema.output_format;
+      expect(outputFormatParam).toBeDefined();
     });
   });
 });

@@ -762,3 +762,20 @@ export function mergeFileDataWithArgs(
   result[dataKey] = fileContent;
   return result;
 }
+
+// Helper function for formatting tool responses based on selected output format
+export function formatToolResponse(response: any, format: 'json' | 'string' = 'json'): string {
+  switch (format) {
+    case 'string':
+      // Extract actual content and return as string
+      const actualContent = extractActualContent(response);
+      return typeof actualContent === 'string' 
+        ? actualContent 
+        : JSON.stringify(actualContent, null, 2);
+        
+    case 'json':
+    default:
+      // Return full response as pretty-printed JSON
+      return JSON.stringify(response, null, 2);
+  }
+}
