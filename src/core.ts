@@ -573,3 +573,192 @@ export function createResourceLink(filePath: string, data: any, description?: st
     description: description || "Cached tool response"
   };
 }
+
+// File reading and parsing functions for call_tool_with_file_content
+
+// Function to detect file format based on extension
+export function detectFileFormat(filePath: string): string {
+  const ext = path.extname(filePath).toLowerCase();
+  
+  const formatMap: Record<string, string> = {
+    '.json': 'json',
+    '.csv': 'csv', 
+    '.tsv': 'tsv',
+    '.yaml': 'yaml',
+    '.yml': 'yaml',
+    '.xml': 'xml',
+    '.txt': 'txt'
+  };
+  
+  return formatMap[ext] || 'txt'; // Default to text
+}
+
+// Function to validate file size
+export async function validateFileSize(filePath: string): Promise<void> {
+  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB limit
+  
+  const stats = await fs.stat(filePath);
+  if (stats.size > MAX_FILE_SIZE) {
+    throw new Error(`File size ${stats.size} bytes exceeds maximum allowed size of ${MAX_FILE_SIZE} bytes (10MB)`);
+  }
+}
+
+// Function to parse CSV content with sensible defaults
+export function parseCSVContent(content: string): object[] {
+  const lines = content.split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== ''); // Skip empty rows
+  
+  if (lines.length === 0) {
+    throw new Error('CSV file is empty');
+  }
+  
+  if (lines.length === 1) {
+    throw new Error('CSV file contains only headers, no data rows');
+  }
+  
+  // Parse CSV row handling quoted values
+  function parseCSVRow(row: string): string[] {
+    const result: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    
+    for (let i = 0; i < row.length; i++) {
+      const char = row[i];
+      const nextChar = row[i + 1];
+      
+      if (char === '"') {
+        if (inQuotes && nextChar === '"') {
+          // Escaped quote
+          current += '"';
+          i++; // Skip next quote
+        } else {
+          // Toggle quote state
+          inQuotes = !inQuotes;
+        }
+      } else if (char === ',' && !inQuotes) {
+        // End of field
+        result.push(current);
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    
+    // Add final field
+    result.push(current);
+    return result;
+  }
+  
+  // First row is headers
+  const headers = parseCSVRow(lines[0]);
+  const dataRows = lines.slice(1);
+  
+  return dataRows.map((line, index) => {
+    const values = parseCSVRow(line);
+    if (values.length !== headers.length) {
+      throw new Error(`Row ${index + 2} has ${values.length} columns, expected ${headers.length} based on headers`);
+    }
+    
+    const row: Record<string, string> = {};
+    headers.forEach((header, i) => {
+      row[header] = values[i] || ''; // Empty cells become empty strings
+    });
+    return row;
+  });
+}
+
+// Function to parse file content based on format
+export function parseFileContent(content: string, format: string): any {
+  switch (format) {
+    case 'json':
+      try {
+        return JSON.parse(content);
+      } catch (error) {
+        throw new Error(`Failed to parse JSON file: ${error instanceof Error ? error.message : 'Invalid JSON format'}`);
+      }
+      
+    case 'csv':
+      return parseCSVContent(content);
+      
+    case 'tsv':
+      // Convert TSV to CSV by replacing tabs with commas, then parse
+      const csvContent = content.replace(/\t/g, ',');
+      return parseCSVContent(csvContent);
+      
+    case 'yaml':
+      try {
+        // Simple YAML parsing - for complex YAML, would need a proper library
+        const lines = content.split('\n').filter(line => line.trim() !== '');
+        const result: Record<string, any> = {};
+        
+        for (const line of lines) {
+          if (line.includes(':')) {
+            const [key, ...valueParts] = line.split(':');
+            const value = valueParts.join(':').trim();
+            result[key.trim()] = value;
+          }
+        }
+        return result;
+      } catch (error) {
+        throw new Error(`Failed to parse YAML file: ${error instanceof Error ? error.message : 'Invalid YAML format'}`);
+      }
+      
+    case 'xml':
+      // Basic XML parsing - just return as text for now
+      // For proper XML parsing, would need a library like xml2js
+      return content;
+      
+    case 'txt':
+    default:
+      // Try to parse as JSON first, fallback to text
+      try {
+        return JSON.parse(content);
+      } catch {
+        return content;
+      }
+  }
+}
+
+// Function to read and parse file
+export async function readAndParseFile(filePath: string): Promise<any> {
+  // Validate file exists and is readable
+  try {
+    await fs.access(filePath, fs.constants.R_OK);
+  } catch {
+    throw new Error(`File '${filePath}' does not exist or is not readable`);
+  }
+  
+  // Validate file size
+  await validateFileSize(filePath);
+  
+  // Read file content
+  const content = await fs.readFile(filePath, 'utf-8');
+  
+  // Detect format and parse
+  const format = detectFileFormat(filePath);
+  return parseFileContent(content, format);
+}
+
+// Function to merge file data with tool arguments
+export function mergeFileDataWithArgs(
+  fileContent: any, 
+  dataKey: string | undefined, 
+  toolArgs: Record<string, any> | undefined
+): any {
+  // Case 1: No data_key - file content is the entire args
+  if (!dataKey) {
+    return fileContent;
+  }
+  
+  // Case 2 & 3: Inject file content at data_key
+  const result = { ...(toolArgs || {}) };
+  
+  // Handle conflicts - error out to prevent accidental overwrites
+  if (toolArgs && toolArgs[dataKey] !== undefined) {
+    throw new Error(`Conflict: data_key '${dataKey}' already exists in tool_args. Choose a different data_key or remove the conflicting parameter.`);
+  }
+  
+  result[dataKey] = fileContent;
+  return result;
+}

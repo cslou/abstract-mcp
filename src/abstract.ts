@@ -15,6 +15,8 @@ import {
   createResourceLink,
   validatePath,
   validateDirectory,
+  readAndParseFile,
+  mergeFileDataWithArgs,
   ToolInfo
 } from "./core.js";
 
@@ -222,6 +224,63 @@ async function main() {
           }
         ]
       };
+    }
+  );
+
+  server.registerTool(
+    "call_tool_with_file_content",
+    {
+      title: "Call Tool with File Content",
+      description: "Reads structured data from files (CSV, JSON, YAML, XML, TSV, TXT) and passes it to upstream MCP tools. Useful for upload operations like database bulk inserts, API bulk operations, or configuration deployments where file data needs to be sent to external services.\\n\\nExamples:\\n- Database bulk insert: {server: \\\"database-mcp\\\", tool_name: \\\"bulk_insert\\\", file_path: \\\"/data/users.csv\\\", data_key: \\\"records\\\", tool_args: {table: \\\"users\\\"}}\\n- API upload: {server: \\\"shopify-mcp\\\", tool_name: \\\"create_products\\\", file_path: \\\"/inventory/products.json\\\", data_key: \\\"products\\\"}\\n- Simple processing: {server: \\\"processor-mcp\\\", tool_name: \\\"analyze\\\", file_path: \\\"/logs/data.json\\\"}",
+      inputSchema: {
+        server: z.string().describe("The name of the upstream MCP server (e.g., 'database-mcp', 'shopify-mcp')"),
+        tool_name: z.string().describe("The name of the tool to call on the server (e.g., 'bulk_insert', 'create_products')"),
+        file_path: z.string().describe("Path to the input file (must be within allowed directories). Supported formats: JSON, CSV, TSV, YAML, XML, TXT"),
+        data_key: z.string().optional().describe("Parameter name for file content in tool arguments. If not provided, file content becomes the entire tool arguments"),
+        tool_args: z.record(z.any()).optional().describe("Additional arguments to merge with file data. Will error if data_key conflicts with existing keys")
+      }
+    },
+    async ({ server, tool_name, file_path, data_key, tool_args }) => {
+      try {
+        // Validate file path against allowed directories
+        if (!validatePath(file_path, STORAGE_DIRS)) {
+          throw new Error(`File path ${file_path} is not within allowed directories: ${STORAGE_DIRS.join(', ')}`);
+        }
+        
+        // Read and parse file content
+        const fileContent = await readAndParseFile(file_path);
+        
+        // Merge file data with tool arguments
+        const mergedArgs = mergeFileDataWithArgs(fileContent, data_key, tool_args);
+        
+        // Call upstream tool with merged arguments
+        const upstreamResponse = await callUpstreamTool(server, tool_name, mergedArgs, upstreamConfigs);
+        
+        // Return simple response (no file storage needed for upload operations)
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(upstreamResponse, null, 2)
+            }
+          ]
+        };
+        
+      } catch (error) {
+        // Return proper error response if operation fails
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to call tool with file content: ${errorMessage}`);
+        
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error in call_tool_with_file_content: ${errorMessage}`
+            }
+          ],
+          isError: true
+        };
+      }
     }
   );
 
