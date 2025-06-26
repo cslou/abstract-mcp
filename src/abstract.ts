@@ -11,6 +11,7 @@ import {
   createCacheData,
   generateCacheFilePath,
   generateFilename,
+  extractContent,
   createResourceLink,
   validatePath,
   validateDirectory,
@@ -56,10 +57,11 @@ async function main() {
         tool_args: z.record(z.any()).optional().describe("The arguments object to pass to the upstream tool (e.g., {query: \"search term\"})"),
         description: z.string().optional().describe("A brief description of what data is being retrieved (e.g., 'Bitcoin prices 2023-2024', 'Search results for AI companies')"),
         storage_path: z.string().optional().describe("Directory path for storing response (must be within allowed directories). Defaults to first allowed directory if not specified."),
-        filename: z.string().optional().describe("Custom filename (without extension). Defaults to <server>-<tool>-<timestamp>")
+        filename: z.string().optional().describe("Custom filename (without extension). Defaults to <server>-<tool>-<timestamp>"),
+        file_format: z.enum(["json", "csv", "md", "txt", "html", "yaml", "xml", "tsv"]).optional().describe("Output format for CONVERSION from JSON. Defaults to clean JSON if not specified.")
       }
     },
-    async ({ server, tool_name, tool_args = {}, description, storage_path, filename }) => {
+    async ({ server, tool_name, tool_args = {}, description, storage_path, filename, file_format }) => {
       try {
         // Determine target directory
         let targetDir = storage_path || STORAGE_DIRS[0];
@@ -78,12 +80,21 @@ async function main() {
         // Attempt to call the upstream MCP tool
         const upstreamResponse = await callUpstreamTool(server, tool_name, tool_args, upstreamConfigs);
         
-        const cacheData = createCacheData(`${server}:${tool_name}`, tool_args, upstreamResponse, description);
+        // Use requested format or default to clean JSON
+        const targetFormat = file_format || 'json';
+        
+        // Extract and convert content (removes metadata bloat and converts format)
+        const extractedContent = extractContent(upstreamResponse, targetFormat);
         
         // Generate filename (custom or default timestamp-based)
         const generatedFilename = generateFilename(server, tool_name, filename);
-        const file = generateCacheFilePath(targetDir, STORAGE_DIRS, generatedFilename);
-        await fs.writeFile(file, JSON.stringify(cacheData, null, 2));
+        const file = generateCacheFilePath(targetDir, STORAGE_DIRS, generatedFilename, targetFormat);
+        
+        // Write the extracted content (not the full metadata wrapper)
+        await fs.writeFile(file, extractedContent);
+        
+        // Create cache data for resource link (preserving metadata for link description)
+        const cacheData = createCacheData(`${server}:${tool_name}`, tool_args, upstreamResponse, description);
 
         const resourceLink = createResourceLink(file, cacheData, description || `Response from ${server}:${tool_name}`);
 
