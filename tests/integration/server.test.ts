@@ -63,8 +63,8 @@ describe('Abstract MCP Server Integration', () => {
       version: "0.1.0"
     });
 
-    // Verify all four tools were registered
-    expect(mockServer.registerTool).toHaveBeenCalledTimes(4);
+    // Verify all five tools were registered
+    expect(mockServer.registerTool).toHaveBeenCalledTimes(5);
     
     // Check first tool registration (call_tool_and_store)
     const firstCall = mockServer.registerTool.mock.calls[0];
@@ -106,6 +106,16 @@ describe('Abstract MCP Server Integration', () => {
     });
     expect(fourthCall[2]).toBeTypeOf('function');
 
+    // Check fifth tool registration (call_tool_with_file_content)
+    const fifthCall = mockServer.registerTool.mock.calls[4];
+    expect(fifthCall[0]).toBe("call_tool_with_file_content");
+    expect(fifthCall[1]).toMatchObject({
+      title: "Call Tool with File Content",
+      description: expect.stringContaining("Reads structured data from files"),
+      inputSchema: expect.any(Object)
+    });
+    expect(fifthCall[2]).toBeTypeOf('function');
+
     // Verify server connection
     expect(mockServer.connect).toHaveBeenCalledWith(mockTransport);
 
@@ -118,7 +128,7 @@ describe('Abstract MCP Server Integration', () => {
 
   it('should verify tool registration structure', () => {
     // This test verifies the tools were registered with correct structure
-    expect(mockServer.registerTool).toHaveBeenCalledTimes(4);
+    expect(mockServer.registerTool).toHaveBeenCalledTimes(5);
     
     const calls = mockServer.registerTool.mock.calls;
     
@@ -144,6 +154,14 @@ describe('Abstract MCP Server Integration', () => {
     // Verify list_allowed_directories tool
     expect(calls[3][0]).toBe("list_allowed_directories");
     expect(calls[3][1].inputSchema).toEqual({});
+    
+    // Verify call_tool_with_file_content tool
+    expect(calls[4][0]).toBe("call_tool_with_file_content");
+    expect(calls[4][1].inputSchema).toHaveProperty('server');
+    expect(calls[4][1].inputSchema).toHaveProperty('tool_name');
+    expect(calls[4][1].inputSchema).toHaveProperty('file_path');
+    expect(calls[4][1].inputSchema).toHaveProperty('data_key');
+    expect(calls[4][1].inputSchema).toHaveProperty('tool_args');
   });
 
   describe('Directory Storage Integration', () => {
@@ -161,7 +179,7 @@ describe('Abstract MCP Server Integration', () => {
     it('should backward compatibility still work without storage_path', () => {
       // The current test setup already validates that the server works without
       // storage_path parameter, which is backward compatibility
-      expect(mockServer.registerTool).toHaveBeenCalledTimes(4);
+      expect(mockServer.registerTool).toHaveBeenCalledTimes(5);
       expect(fsMocks.mkdir).toHaveBeenCalledWith(
         expect.stringContaining('cache'),
         { recursive: true }
@@ -179,6 +197,38 @@ describe('Abstract MCP Server Integration', () => {
       
       // Verify the file_format parameter exists (specific enum validation is tested in unit tests)
       expect(callToolAndStoreCall[1].inputSchema.file_format).toBeDefined();
+    });
+  });
+
+  describe('File Content Integration', () => {
+    it('should register call_tool_with_file_content with correct schema', () => {
+      // Verify the call_tool_with_file_content tool was registered
+      const calls = mockServer.registerTool.mock.calls;
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      
+      expect(fileContentCall).toBeDefined();
+      expect(fileContentCall[1].inputSchema).toHaveProperty('server');
+      expect(fileContentCall[1].inputSchema).toHaveProperty('tool_name');
+      expect(fileContentCall[1].inputSchema).toHaveProperty('file_path');
+      expect(fileContentCall[1].inputSchema).toHaveProperty('data_key');
+      expect(fileContentCall[1].inputSchema).toHaveProperty('tool_args');
+      
+      // Verify optional parameters
+      expect(fileContentCall[1].inputSchema.data_key).toBeDefined();
+      expect(fileContentCall[1].inputSchema.tool_args).toBeDefined();
+    });
+
+    it('should support file upload workflows without storage parameters', () => {
+      // This tool is for upload operations, not storage, so it shouldn't have
+      // storage-related parameters like storage_path, filename, file_format
+      const calls = mockServer.registerTool.mock.calls;
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      
+      expect(fileContentCall).toBeDefined();
+      expect(fileContentCall[1].inputSchema).not.toHaveProperty('storage_path');
+      expect(fileContentCall[1].inputSchema).not.toHaveProperty('filename');
+      expect(fileContentCall[1].inputSchema).not.toHaveProperty('file_format');
+      expect(fileContentCall[1].inputSchema).not.toHaveProperty('description');
     });
   });
 });
