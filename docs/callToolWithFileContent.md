@@ -23,6 +23,7 @@ File (CSV/JSON/YAML/etc.) → Auto-detect Format → Convert to JSON → Merge w
   file_path: string,           // Path to input file (must be in allowed directories)
   data_key?: string,           // Parameter name for file content in tool args
   tool_args?: object,          // Additional arguments to merge with file data
+  output_format?: string,      // Output format for the response
   
   // Response handling (reuse existing logic)
   description?: string,        // Description for stored response
@@ -390,5 +391,255 @@ tests/fixtures/
 - **Memory Management**: Stream processing for large files
 - **Format Caching**: Cache format detection results
 - **Connection Pooling**: Reuse upstream MCP connections
+
+## Enhancement: LLM-Selectable Output Format
+
+### Current Issue
+The `call_tool_with_file_content` function currently hard-codes the output format as pretty-printed JSON:
+
+```typescript
+return {
+  content: [
+    {
+      type: "text",
+      text: JSON.stringify(upstreamResponse, null, 2)
+    }
+  ]
+};
+```
+
+This approach has limitations:
+- **Always JSON**: Even when upstream tools return plain text or human-readable content, it gets wrapped in JSON
+- **No Choice**: LLMs cannot select the most appropriate output format for their use case
+- **Context Pollution**: JSON formatting can add unnecessary noise when simple string responses are more appropriate
+
+### Proposed Enhancement
+
+Add an `output_format` parameter to allow LLMs to select between JSON and string output formats.
+
+#### New Input Schema Parameter
+```typescript
+output_format: z.enum(["json", "string"]).optional().describe("Output format for the response. 'json' returns pretty-printed JSON (default), 'string' returns the raw text content from the upstream response")
+```
+
+#### Implementation Logic
+
+```typescript
+// After calling upstream tool
+const upstreamResponse = await callUpstreamTool(server, tool_name, mergedArgs, upstreamConfigs);
+
+// Format response based on selected output format
+let responseText: string;
+const selectedFormat = output_format || 'json'; // Default to JSON for backward compatibility
+
+switch (selectedFormat) {
+  case 'string':
+    // Extract actual content and return as string
+    const actualContent = extractActualContent(upstreamResponse);
+    responseText = typeof actualContent === 'string' 
+      ? actualContent 
+      : JSON.stringify(actualContent, null, 2);
+    break;
+    
+  case 'json':
+  default:
+    // Current behavior - return pretty-printed JSON
+    responseText = JSON.stringify(upstreamResponse, null, 2);
+    break;
+}
+
+return {
+  content: [
+    {
+      type: "text",
+      text: responseText
+    }
+  ]
+};
+```
+
+#### Updated Tool Schema
+```typescript
+server.registerTool(
+  "call_tool_with_file_content",
+  {
+    title: "Call Tool with File Content",
+    description: "Reads structured data from files (CSV, JSON, YAML, XML, TSV, TXT) and passes it to upstream MCP tools. Supports selectable output formats for optimal LLM context management.\n\nOutput Format Options:\n- 'json': Returns full MCP response with metadata (default)\n- 'string': Returns clean text content, ideal for human-readable responses\n\nExamples:\n- Database operation: {server: \"database-mcp\", tool_name: \"bulk_insert\", file_path: \"/data/users.csv\", output_format: \"string\"}\n- API call with JSON analysis: {server: \"api-mcp\", tool_name: \"get_data\", file_path: \"/config.json\", output_format: \"json\"}\n- Text processing: {server: \"nlp-mcp\", tool_name: \"analyze_text\", file_path: \"/docs/content.txt\", output_format: \"string\"}",
+    inputSchema: {
+      server: z.string().describe("The name of the upstream MCP server (e.g., 'database-mcp', 'shopify-mcp')"),
+      tool_name: z.string().describe("The name of the tool to call on the server (e.g., 'bulk_insert', 'create_products')"),
+      file_path: z.string().describe("Path to the input file (must be within allowed directories). Supported formats: JSON, CSV, TSV, YAML, XML, TXT"),
+      data_key: z.string().optional().describe("Parameter name for file content in tool arguments. If not provided, file content becomes the entire tool arguments"),
+      tool_args: z.record(z.any()).optional().describe("Additional arguments to merge with file data. Will error if data_key conflicts with existing keys"),
+      output_format: z.enum(["json", "string"]).optional().describe("Output format for the response. 'json' returns full MCP response with metadata (default), 'string' returns clean text content")
+    }
+  },
+  // ... implementation
+```
+
+### Use Cases & Examples
+
+#### Use Case 1: Database Bulk Insert (String Output)
+```typescript
+{
+  server: "database-mcp",
+  tool_name: "bulk_insert",
+  file_path: "/data/users.csv",
+  data_key: "records",
+  tool_args: {table: "users"},
+  output_format: "string"
+}
+
+// Response with output_format: "string"
+"Successfully inserted 150 records into users table"
+
+// vs Current behavior (always JSON)
+{
+  "content": [
+    {
+      "type": "text", 
+      "text": "Successfully inserted 150 records into users table"
+    }
+  ]
+}
+```
+
+#### Use Case 2: API Analysis (JSON Output)
+```typescript
+{
+  server: "analytics-mcp",
+  tool_name: "analyze_data", 
+  file_path: "/reports/metrics.json",
+  output_format: "json"
+}
+
+// Response provides full MCP structure for detailed analysis
+{
+  "content": [
+    {
+      "type": "text",
+      "text": "{\"summary\": \"Q4 metrics show 23% growth\", \"details\": {...}}"
+    }
+  ],
+  "isError": false
+}
+```
+
+#### Use Case 3: Text Processing (String Output)
+```typescript
+{
+  server: "nlp-mcp",
+  tool_name: "summarize_document",
+  file_path: "/documents/report.txt",
+  output_format: "string"
+}
+
+// Clean text response ideal for further LLM processing
+"The document discusses quarterly performance metrics with key findings including revenue growth of 23% and customer satisfaction improvements."
+```
+
+### Implementation Details
+
+#### Helper Function for Response Formatting
+```typescript
+// Add to core.ts
+export function formatToolResponse(response: any, format: 'json' | 'string'): string {
+  switch (format) {
+    case 'string':
+      const actualContent = extractActualContent(response);
+      return typeof actualContent === 'string' 
+        ? actualContent 
+        : JSON.stringify(actualContent, null, 2);
+        
+    case 'json':
+    default:
+      return JSON.stringify(response, null, 2);
+  }
+}
+```
+
+#### Backward Compatibility
+- **Default Behavior**: If `output_format` is not specified, defaults to `"json"` (current behavior)
+- **Existing Code**: No changes required to existing implementations
+- **Migration Path**: Teams can gradually adopt string format where appropriate
+
+#### Error Handling Enhancement
+```typescript
+// Error responses should also respect output format
+catch (error) {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  console.error(`Failed to call tool with file content: ${errorMessage}`);
+  
+  const selectedFormat = output_format || 'json';
+  let responseText: string;
+  
+  if (selectedFormat === 'string') {
+    responseText = `Error in call_tool_with_file_content: ${errorMessage}`;
+  } else {
+    responseText = JSON.stringify({
+      error: errorMessage,
+      tool: `${server}:${tool_name}`,
+      timestamp: new Date().toISOString()
+    }, null, 2);
+  }
+  
+  return {
+    content: [
+      {
+        type: "text",
+        text: responseText
+      }
+    ],
+    isError: true
+  };
+}
+```
+
+### Testing Requirements
+
+#### Unit Tests
+- [ ] Test `formatToolResponse()` helper function with various response types
+- [ ] Verify backward compatibility (no `output_format` specified)
+- [ ] Test string format with text responses
+- [ ] Test string format with complex object responses
+- [ ] Test JSON format maintains current behavior
+
+#### Integration Tests
+- [ ] End-to-end workflows with both output formats
+- [ ] Error handling for both formats
+- [ ] Upstream tool responses in various formats (text, JSON, structured data)
+
+#### Test Cases
+```typescript
+// Test data
+const textResponse = {
+  content: [{ type: "text", text: "Operation completed successfully" }]
+};
+
+const jsonResponse = {
+  content: [{ type: "text", text: JSON.stringify({status: "success", count: 150}) }],
+  metadata: { timestamp: "2024-01-01T00:00:00Z" }
+};
+
+// Expected outputs
+assert(formatToolResponse(textResponse, 'string') === "Operation completed successfully");
+assert(formatToolResponse(textResponse, 'json').includes('"type": "text"'));
+```
+
+### Benefits
+
+1. **Reduced Context Noise**: String format eliminates JSON wrapper overhead for simple responses
+2. **Better LLM Processing**: Clean text responses are easier for LLMs to work with
+3. **Flexible Integration**: JSON format preserves full metadata when needed for analysis
+4. **Backward Compatible**: Existing implementations continue to work unchanged
+5. **User Choice**: LLMs can select the most appropriate format for their specific use case
+
+### Future Enhancements
+
+This implementation sets the foundation for additional output format options:
+- **Raw Format**: Direct upstream response without any processing
+- **Structured Format**: Enhanced JSON with response metadata and timing
+- **Markdown Format**: Formatted text suitable for documentation
+- **Custom Format**: Allow format specification via additional parameters
 
 This implementation provides a robust foundation for file-based MCP tool integration while maintaining security, performance, and usability standards. 
