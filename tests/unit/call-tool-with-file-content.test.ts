@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { 
   detectFileFormat,
   parseCSVContent,
+  parseTSVContent,
   parseFileContent,
   mergeFileDataWithArgs,
   formatToolResponse
@@ -96,6 +97,49 @@ describe('parseCSVContent', () => {
   });
 });
 
+describe('parseTSVContent', () => {
+  it('should parse basic TSV content correctly', () => {
+    const tsvContent = 'name\tage\tcity\nJohn\t30\tNYC\nJane\t25\tLA';
+    const result = parseTSVContent(tsvContent);
+    expect(result).toEqual([
+      { name: 'John', age: '30', city: 'NYC' },
+      { name: 'Jane', age: '25', city: 'LA' }
+    ]);
+  });
+
+  it('should handle TSV with commas in field values (the critical bug scenario)', () => {
+    const tsvContent = 'name\tdescription\tprice\nProduct A\tHigh quality, durable item\t$100\nProduct B\tCheap, basic model\t$50';
+    const result = parseTSVContent(tsvContent);
+    expect(result).toEqual([
+      { name: 'Product A', description: 'High quality, durable item', price: '$100' },
+      { name: 'Product B', description: 'Cheap, basic model', price: '$50' }
+    ]);
+  });
+
+  it('should handle empty TSV cells', () => {
+    const tsvContent = 'name\tage\temail\nJohn\t30\t\nJane\t\tjane@example.com';
+    const result = parseTSVContent(tsvContent);
+    expect(result).toEqual([
+      { name: 'John', age: '30', email: '' },
+      { name: 'Jane', age: '', email: 'jane@example.com' }
+    ]);
+  });
+
+  it('should error on empty TSV files', () => {
+    expect(() => parseTSVContent('')).toThrow('TSV file is empty');
+    expect(() => parseTSVContent('   \n  \n')).toThrow('TSV file is empty');
+  });
+
+  it('should error on TSV with only headers', () => {
+    expect(() => parseTSVContent('name\temail\tage')).toThrow('TSV file contains only headers, no data rows');
+  });
+
+  it('should error on malformed TSV rows', () => {
+    const tsvContent = 'name\temail\tage\nJohn\tjohn@example.com\t30\nJane\tjane@example.com'; // Missing age field
+    expect(() => parseTSVContent(tsvContent)).toThrow('Row 3 has 2 columns, expected 3 based on headers');
+  });
+});
+
 describe('parseFileContent', () => {
   it('should parse JSON content', () => {
     const jsonContent = '{"name": "John", "age": 30}';
@@ -117,12 +161,21 @@ describe('parseFileContent', () => {
     ]);
   });
 
-  it('should parse TSV content by converting to CSV', () => {
+  it('should parse TSV content with tab delimiters', () => {
     const tsvContent = 'name\tage\nJohn\t30\nJane\t25';
     const result = parseFileContent(tsvContent, 'tsv');
     expect(result).toEqual([
       { name: 'John', age: '30' },
       { name: 'Jane', age: '25' }
+    ]);
+  });
+
+  it('should parse TSV content with commas in field values', () => {
+    const tsvContent = 'name\tdescription\tprice\nProduct A\tHigh quality, durable item\t$100\nProduct B\tCheap, basic model\t$50';
+    const result = parseFileContent(tsvContent, 'tsv');
+    expect(result).toEqual([
+      { name: 'Product A', description: 'High quality, durable item', price: '$100' },
+      { name: 'Product B', description: 'Cheap, basic model', price: '$50' }
     ]);
   });
 

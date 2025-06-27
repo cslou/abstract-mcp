@@ -668,6 +668,43 @@ export function parseCSVContent(content: string): object[] {
   });
 }
 
+// Function to parse TSV content with tab delimiters
+export function parseTSVContent(content: string): object[] {
+  const lines = content.split('\n')
+    .map(line => line.replace(/\r$/, '')) // Remove only carriage returns, preserve tabs
+    .filter(line => line.trim() !== ''); // Skip empty or whitespace-only rows
+  
+  if (lines.length === 0) {
+    throw new Error('TSV file is empty');
+  }
+  
+  if (lines.length === 1) {
+    throw new Error('TSV file contains only headers, no data rows');
+  }
+  
+  // Parse TSV row by splitting on tabs
+  function parseTSVRow(row: string): string[] {
+    return row.split('\t');
+  }
+  
+  // First row is headers
+  const headers = parseTSVRow(lines[0]);
+  const dataRows = lines.slice(1);
+  
+  return dataRows.map((line, index) => {
+    const values = parseTSVRow(line);
+    if (values.length !== headers.length) {
+      throw new Error(`Row ${index + 2} has ${values.length} columns, expected ${headers.length} based on headers`);
+    }
+    
+    const row: Record<string, string> = {};
+    headers.forEach((header, i) => {
+      row[header] = values[i] || ''; // Empty cells become empty strings
+    });
+    return row;
+  });
+}
+
 // Function to parse file content based on format
 export function parseFileContent(content: string, format: string): any {
   switch (format) {
@@ -682,9 +719,7 @@ export function parseFileContent(content: string, format: string): any {
       return parseCSVContent(content);
       
     case 'tsv':
-      // Convert TSV to CSV by replacing tabs with commas, then parse
-      const csvContent = content.replace(/\t/g, ',');
-      return parseCSVContent(csvContent);
+      return parseTSVContent(content);
       
     case 'yaml':
       try {
