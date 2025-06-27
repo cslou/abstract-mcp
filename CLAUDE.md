@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - [x] Determine where we should store the content
 - [x] Convert to different files
 - [x] Must inform agent in description to add in file type based on available information
-- [ ] Call tool and upload from file (E.g. for endpoints that requests a json or txt)
+- [x] Call tool and upload from file (E.g. for endpoints that requests a json or txt)
 - [ ] publish to npm
 
 ## Commands

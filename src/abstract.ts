@@ -53,15 +53,53 @@ async function main() {
     "call_tool_and_store",
     {
       title: "Call Tool and Store",
-      description: "Calls upstream MCP tools and caches responses to prevent context bloat. Returns a compact resource link instead of large payloads, keeping conversation context clean while preserving data access.\n\nCommon usage patterns:\n- Web search: {server: \"tavily-mcp\", tool_name: \"search\", tool_args: {query: \"AI news\"}}\n- File operations: {server: \"filesystem\", tool_name: \"read_file\", tool_args: {path: \"/path/to/file\"}}\n\nUse this when expecting large responses that would consume excessive context tokens. Note: make sure you know the input params before calling the tool. Do not ever guess.",
+      description: `**Purpose**: Calls upstream MCP tools and caches responses to prevent context bloat. Returns a compact resource link instead of large payloads, keeping conversation context clean while preserving data access.
+
+**When to Use**:
+- Expecting large responses that would consume excessive context tokens
+- Need to preserve data for later reference without cluttering context
+- Working with APIs that return substantial datasets (web search, file contents, database queries)
+
+**Prerequisites**:
+- Use list_available_tools first to discover available servers and tools
+- Use list_tool_details to understand required parameters for specific tools
+- Ensure you know the exact input parameters - never guess parameter names or formats
+
+**Examples**:
+\`\`\`json
+// Web search with data storage
+{
+  "server": "tavily-mcp",
+  "tool_name": "search", 
+  "tool_args": {"query": "latest AI developments 2024"},
+  "description": "AI news search results",
+  "file_format": "md"
+}
+
+// File operations with custom storage
+{
+  "server": "filesystem",
+  "tool_name": "read_file",
+  "tool_args": {"path": "/path/to/large-data.json"},
+  "storage_path": "/my-projects/data",
+  "filename": "imported-data",
+  "file_format": "json"
+}
+\`\`\`
+
+**Security Notes**: Only stores in allowed directories. All upstream tool arguments are passed through unchanged to the target server.`,
       inputSchema: {
-        server: z.string().describe("The name of the upstream MCP server (e.g., 'tavily-mcp', 'filesystem')"),
-        tool_name: z.string().describe("The name of the tool to call on the server (e.g., 'search', 'read_file', 'get_crypto_prices')"),
-        tool_args: z.record(z.any()).optional().describe("The arguments object to pass to the upstream tool (e.g., {query: \"search term\"})"),
-        description: z.string().optional().describe("A brief description of what data is being retrieved (e.g., 'Bitcoin prices 2023-2024', 'Search results for AI companies')"),
-        storage_path: z.string().optional().describe("Directory path for storing response (must be within allowed directories). Defaults to first allowed directory if not specified."),
-        filename: z.string().optional().describe("Custom filename (without extension). Defaults to <server>-<tool>-<timestamp>"),
-        file_format: z.enum(["json", "csv", "md", "txt", "html", "yaml", "xml", "tsv"]).optional().describe("Output format for CONVERSION from JSON. Defaults to clean JSON if not specified.")
+        server: z.string().describe("The name of the upstream MCP server. Use list_available_tools to see available options (e.g., 'tavily-mcp', 'filesystem')"),
+        tool_name: z.string().describe("The name of the tool to call on the server. Use list_tool_details to see available tools for a server (e.g., 'search', 'read_file', 'get_crypto_prices')"),
+        tool_args: z.record(z.any()).optional().describe("Arguments object to pass to the upstream tool. Must match the tool's input schema exactly (e.g., {query: \"search term\"}, {path: \"/file/path\"})"),
+        description: z.string().optional().describe("Brief description of what data is being retrieved. Used in resource link metadata (e.g., 'Bitcoin prices 2023-2024', 'Search results for AI companies')"),
+        storage_path: z.string().optional().describe("Directory path for storing response file. Must be within allowed directories (use list_allowed_directories to see options). Defaults to first allowed directory"),
+        filename: z.string().optional().describe("Custom filename without extension. Defaults to automatic naming: <server>-<tool>-<timestamp> (e.g., 'my-search-results')"),
+        file_format: z.enum(["json", "csv", "md", "txt", "html", "yaml", "xml", "tsv"]).optional().describe("Output format for converting the response data. Converts JSON to specified format. Defaults to clean JSON")
+      },
+      annotations: {
+        openWorldHint: true,
+        destructiveHint: false
       }
     },
     async ({ server, tool_name, tool_args = {}, description, storage_path, filename, file_format }) => {
@@ -133,10 +171,39 @@ async function main() {
     "list_available_tools",
     {
       title: "List Available Tools",
-      description: "Discovers available tools from upstream MCP servers. Returns structured data for easy parsing.\n\nExamples:\n- Basic discovery: list_available_tools with {}\n- Detailed schemas: list_available_tools with {detailed: true}\n- Filter by server: list_available_tools with {filter_by_server: \"tavily-mcp\"}",
+      description: `**Purpose**: Discovers available tools from upstream MCP servers. Returns structured data for easy parsing and tool discovery.
+
+**When to Use**:
+- Before calling any upstream tools to see what's available
+- To explore capabilities of connected MCP servers
+- To validate server and tool names before making calls
+
+**Output Format**: Returns array of objects with \`{server, tool, description, inputSchema?}\` structure
+
+**Examples**:
+\`\`\`json
+// Basic discovery - list all tools
+{}
+
+// Get detailed schemas for all tools
+{"detailed": true}
+
+// Focus on specific server
+{"filter_by_server": "tavily-mcp"}
+
+// Detailed view of one server
+{"detailed": true, "filter_by_server": "filesystem"}
+\`\`\`
+
+**Integration**: Use this before \`call_tool_and_store\` to discover valid server and tool_name values.`,
       inputSchema: {
-        detailed: z.boolean().optional().describe("Include full input schemas when true (default: false)"),
-        filter_by_server: z.string().optional().describe("Restrict listing to one upstream server (e.g., 'tavily-mcp')")
+        detailed: z.boolean().optional().describe("Include full input schemas when true. False returns basic info only (server, tool, description). Default: false"),
+        filter_by_server: z.string().optional().describe("Restrict listing to one upstream server. Must match exact server name from configuration (e.g., 'tavily-mcp', 'filesystem')")
+      },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+        destructiveHint: false
       }
     },
     async ({ detailed, filter_by_server }) => {
@@ -161,10 +228,36 @@ async function main() {
     "list_tool_details",
     {
       title: "Get Tool Details",
-      description: "Get complete definition for a specific upstream tool including input schema.\n\nExample: list_tool_details with {server: \"tavily-mcp\", tool_name: \"search\"}",
+      description: `**Purpose**: Get complete definition for a specific upstream tool including input schema, description, and parameter requirements.
+
+**When to Use**:
+- Before calling a tool to understand its exact parameter requirements
+- To explore the capabilities and constraints of a specific tool
+- To get the full input schema for complex tools with many parameters
+
+**Prerequisites**: Use \`list_available_tools\` first to discover valid server and tool_name combinations.
+
+**Examples**:
+\`\`\`json
+// Get details for web search tool
+{"server": "tavily-mcp", "tool_name": "search"}
+
+// Get details for file operations
+{"server": "filesystem", "tool_name": "read_file"}
+
+// Get details for crypto price tool
+{"server": "gordian", "tool_name": "get_crypto_prices"}
+\`\`\`
+
+**Output**: Returns complete tool definition with input schema, description, and parameter constraints.`,
       inputSchema: {
-        server: z.string().describe("The upstream server name (e.g., 'tavily-mcp', 'gordian')"),
-        tool_name: z.string().describe("The name of the tool to inspect (e.g., 'search', 'get_crypto_prices')")
+        server: z.string().describe("The upstream server name. Must match exactly the server names from list_available_tools (e.g., 'tavily-mcp', 'gordian')"),
+        tool_name: z.string().describe("The name of the tool to inspect. Must match exactly the tool names from list_available_tools (e.g., 'search', 'get_crypto_prices')")
+      },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+        destructiveHint: false
       }
     },
     async ({ server, tool_name }) => {
@@ -209,8 +302,23 @@ async function main() {
     "list_allowed_directories",
     {
       title: "List Allowed Storage Directories",
-      description: "Lists all directories that Abstract is allowed to store responses in. These directories are specified via command line arguments when the server starts.",
-      inputSchema: {}
+      description: `**Purpose**: Lists all directories that Abstract is allowed to store responses in. These directories are specified via command line arguments when the server starts.
+
+**When to Use**:
+- Before using custom storage_path in call_tool_and_store
+- To understand where response files can be stored
+- To verify directory permissions and availability
+
+**No Parameters Required**: This tool takes no input parameters.
+
+**Output**: Returns JSON object with allowed_directories array, default_directory, and total count.
+
+**Security Context**: Abstract only stores files within these pre-configured directories to prevent unauthorized file system access.`,
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false
+      }
     },
     async () => {
       return {
@@ -232,14 +340,70 @@ async function main() {
     "call_tool_with_file_content",
     {
       title: "Call Tool with File Content",
-      description: "Reads structured data from files (CSV, JSON, YAML, XML, TSV, TXT) and passes it to upstream MCP tools. Supports selectable output formats for optimal LLM context management.\\n\\nOutput Format Options:\\n- 'json': Returns full MCP response with metadata (default)\\n- 'string': Returns clean text content, ideal for human-readable responses\\n\\nExamples:\\n- Database bulk insert: {server: \\\"database-mcp\\\", tool_name: \\\"bulk_insert\\\", file_path: \\\"/data/users.csv\\\", data_key: \\\"records\\\", tool_args: {table: \\\"users\\\"}, output_format: \\\"string\\\"}\\n- API upload: {server: \\\"shopify-mcp\\\", tool_name: \\\"create_products\\\", file_path: \\\"/inventory/products.json\\\", data_key: \\\"products\\\"}\\n- Simple processing: {server: \\\"processor-mcp\\\", tool_name: \\\"analyze\\\", file_path: \\\"/logs/data.json\\\", output_format: \\\"string\\\"}",
+      description: `**Purpose**: Reads structured data from files (CSV, JSON, YAML, XML, TSV, TXT) and passes it to upstream MCP tools. Supports selectable output formats for optimal LLM context management.
+
+**When to Use**:
+- Bulk operations requiring large datasets (database inserts, API uploads)
+- Processing structured data files without loading them into context
+- Automated deployments using configuration files
+- Data analysis workflows with external datasets
+
+**File Format Support**: 
+- JSON: Direct parsing and passthrough
+- CSV/TSV: Converts to array of objects with headers
+- YAML: Parses to JSON object structure
+- XML: Basic parsing support
+- TXT: Attempts JSON parsing, fallback to string
+
+**Output Format Options**:
+- \`json\`: Returns full MCP response with metadata (default)
+- \`string\`: Returns clean text content, ideal for human-readable responses
+
+**Prerequisites**: 
+- File must be within allowed directories (use list_allowed_directories)
+- Use list_available_tools and list_tool_details to understand target tool requirements
+
+**Examples**:
+\`\`\`json
+// Database bulk insert with string output
+{
+  "server": "database-mcp",
+  "tool_name": "bulk_insert", 
+  "file_path": "/data/users.csv",
+  "data_key": "records",
+  "tool_args": {"table": "users"},
+  "output_format": "string"
+}
+
+// API upload with file content as entire args
+{
+  "server": "shopify-mcp",
+  "tool_name": "create_products",
+  "file_path": "/inventory/products.json"
+}
+
+// Configuration deployment
+{
+  "server": "kubernetes-mcp",
+  "tool_name": "deploy",
+  "file_path": "/configs/app.yaml",
+  "data_key": "spec",
+  "tool_args": {"namespace": "production"}
+}
+\`\`\`
+
+**Security Notes**: Files must be within allowed directories. File size limited to 10MB.`,
       inputSchema: {
-        server: z.string().describe("The name of the upstream MCP server (e.g., 'database-mcp', 'shopify-mcp')"),
-        tool_name: z.string().describe("The name of the tool to call on the server (e.g., 'bulk_insert', 'create_products')"),
-        file_path: z.string().describe("Path to the input file (must be within allowed directories). Supported formats: JSON, CSV, TSV, YAML, XML, TXT"),
-        data_key: z.string().optional().describe("Parameter name for file content in tool arguments. If not provided, file content becomes the entire tool arguments"),
-        tool_args: z.record(z.any()).optional().describe("Additional arguments to merge with file data. Will error if data_key conflicts with existing keys"),
-        output_format: z.enum(["json", "string"]).optional().describe("Output format for the response. 'json' returns full MCP response with metadata (default), 'string' returns clean text content")
+        server: z.string().describe("The name of the upstream MCP server. Use list_available_tools to see options (e.g., 'database-mcp', 'shopify-mcp')"),
+        tool_name: z.string().describe("The name of the tool to call on the server. Use list_tool_details to see requirements (e.g., 'bulk_insert', 'create_products')"),
+        file_path: z.string().describe("Path to the input file within allowed directories. Auto-detects format from extension: .json, .csv, .tsv, .yaml, .xml, .txt (max 10MB)"),
+        data_key: z.string().optional().describe("Parameter name for injecting file content into tool arguments. If omitted, file content becomes the entire tool arguments object"),
+        tool_args: z.record(z.any()).optional().describe("Additional arguments to merge with file data. Cannot contain keys that conflict with data_key parameter"),
+        output_format: z.enum(["json", "string"]).optional().describe("Response format: 'json' returns full MCP response with metadata (default), 'string' returns clean text content only")
+      },
+      annotations: {
+        openWorldHint: true,
+        destructiveHint: false
       }
     },
     async ({ server, tool_name, file_path, data_key, tool_args, output_format }) => {
