@@ -169,7 +169,7 @@ describe('Abstract MCP Server Integration', () => {
     it('should verify storage_path parameter exists in tool schema', () => {
       // Verify the call_tool_and_store tool was registered with all storage parameters
       const calls = mockServer.registerTool.mock.calls;
-      const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store');
+      const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store')!;
       
       expect(callToolAndStoreCall).toBeDefined();
       expect(callToolAndStoreCall[1].inputSchema).toHaveProperty('storage_path');
@@ -191,7 +191,7 @@ describe('Abstract MCP Server Integration', () => {
       // This test verifies that the file_format parameter is available
       // The actual format detection and extraction is tested in unit tests
       const calls = mockServer.registerTool.mock.calls;
-      const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store');
+      const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store')!;
       
       expect(callToolAndStoreCall).toBeDefined();
       expect(callToolAndStoreCall[1].inputSchema.file_format).toBeDefined();
@@ -205,7 +205,7 @@ describe('Abstract MCP Server Integration', () => {
     it('should register call_tool_with_file_content with correct schema', () => {
       // Verify the call_tool_with_file_content tool was registered
       const calls = mockServer.registerTool.mock.calls;
-      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content')!;
       
       expect(fileContentCall).toBeDefined();
       expect(fileContentCall[1].inputSchema).toHaveProperty('server');
@@ -223,7 +223,7 @@ describe('Abstract MCP Server Integration', () => {
       // This tool is for upload operations, not storage, so it shouldn't have
       // storage-related parameters like storage_path, filename, file_format
       const calls = mockServer.registerTool.mock.calls;
-      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content')!;
       
       expect(fileContentCall).toBeDefined();
       expect(fileContentCall[1].inputSchema).not.toHaveProperty('storage_path');
@@ -236,7 +236,7 @@ describe('Abstract MCP Server Integration', () => {
   describe('Output Format Integration', () => {
     it('should register call_tool_with_file_content with output_format parameter', () => {
       const calls = mockServer.registerTool.mock.calls;
-      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content')!;
       
       expect(fileContentCall).toBeDefined();
       expect(fileContentCall[1].inputSchema).toHaveProperty('output_format');
@@ -248,7 +248,7 @@ describe('Abstract MCP Server Integration', () => {
 
     it('should include output format options in tool description', () => {
       const calls = mockServer.registerTool.mock.calls;
-      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content')!;
       
       expect(fileContentCall).toBeDefined();
       const description = fileContentCall[1].description;
@@ -262,21 +262,21 @@ describe('Abstract MCP Server Integration', () => {
 
     it('should demonstrate output_format usage in tool examples', () => {
       const calls = mockServer.registerTool.mock.calls;
-      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content')!;
       
       expect(fileContentCall).toBeDefined();
       const description = fileContentCall[1].description;
       
       // Verify examples show output_format parameter usage  
-      expect(description).toContain('output_format: \\\"string\\\"');
-      expect(description).toContain('Examples:');
+      expect(description).toContain('"output_format": "string"');
+      expect(description).toContain('**Examples**:');
     });
 
     it('should maintain backward compatibility for tools without output_format', () => {
       // Verify that call_tool_and_store does NOT have output_format
       // (it uses file_format for storage conversion instead)
       const calls = mockServer.registerTool.mock.calls;
-      const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store');
+      const callToolAndStoreCall = calls.find(call => call[0] === 'call_tool_and_store')!;
       
       expect(callToolAndStoreCall).toBeDefined();
       expect(callToolAndStoreCall[1].inputSchema).not.toHaveProperty('output_format');
@@ -287,7 +287,7 @@ describe('Abstract MCP Server Integration', () => {
       // This test verifies the output_format parameter is properly configured
       // The actual enum validation and formatting logic is tested in unit tests
       const calls = mockServer.registerTool.mock.calls;
-      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content');
+      const fileContentCall = calls.find(call => call[0] === 'call_tool_with_file_content')!;
       
       expect(fileContentCall).toBeDefined();
       expect(fileContentCall[1].inputSchema.output_format).toBeDefined();
