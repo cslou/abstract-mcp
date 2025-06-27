@@ -1,4 +1,0 @@
-service: web-api
-version: 1.2.3
-replicas: 3
-environment: production
