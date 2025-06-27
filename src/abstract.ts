@@ -468,6 +468,94 @@ async function main() {
     }
   );
 
+  server.registerTool(
+    "call_tool",
+    {
+      title: "Call Upstream Tool",
+      description: `**Purpose**: Calls upstream MCP tools directly and returns the raw response in conversation context. No caching or file operations.
+
+**⚠️ IMPORTANT DECISION CRITERIA**:
+- **Use call_tool**: For small responses (< 1000 tokens) that you need immediately in context. For example if you are returning 10 years of daily data, it is unlikely to be small. Also use this if the user tells you not to store the response.
+- **Use call_tool_and_store**: For large responses (> 1000 tokens) that would consume excessive context tokens
+- **Use call_tool_with_file_content**: When you need to send file data to upstream tools
+
+**When to Use call_tool**:
+- Simple queries with compact outputs (status checks, calculations, brief searches)
+- Testing or debugging upstream tools
+- Single-use data that doesn't need preservation
+- When you need the response immediately available for further processing
+
+**When NOT to Use call_tool**:
+- If response might be large (web search results, file contents, database queries with many rows)
+- If you want to preserve the data for later reference
+- If you're sending file data to the upstream tool
+
+**Prerequisites**:
+- Use list_available_tools first to discover available servers and tools
+- Use list_tool_details to understand required parameters for specific tools
+- Ensure you know the exact input parameters - never guess parameter names or formats
+
+**Examples**:
+\`\`\`json
+// Simple status check
+{
+  "server": "system-mcp",
+  "tool_name": "get_status",
+  "tool_args": {}
+}
+
+// Quick calculation
+{
+  "server": "calculator-mcp", 
+  "tool_name": "calculate",
+  "tool_args": {"expression": "25 * 0.08"}
+}
+
+// Brief search (expecting few results)
+{
+  "server": "tavily-mcp",
+  "tool_name": "search",
+  "tool_args": {"query": "current bitcoin price", "max_results": 2}
+}
+\`\`\`
+
+**⚠️ Context Management Warning**: This tool returns full responses directly to conversation context. Use call_tool_and_store for large responses to prevent context bloat.`,
+      inputSchema: {
+        server: z.string().describe("The name of the upstream MCP server. Use list_available_tools to see available options (e.g., 'tavily-mcp', 'filesystem')"),
+        tool_name: z.string().describe("The name of the tool to call on the server. Use list_tool_details to see available tools for a server (e.g., 'search', 'read_file', 'get_crypto_prices')"),
+        tool_args: z.record(z.any()).optional().describe("Arguments object to pass to the upstream tool. Must match the tool's input schema exactly (e.g., {query: \"search term\"}, {path: \"/file/path\"})")
+      },
+      annotations: {
+        openWorldHint: true,
+        destructiveHint: false
+      }
+    },
+    async ({ server, tool_name, tool_args = {} }) => {
+      try {
+        // Call upstream tool directly
+        const upstreamResponse = await callUpstreamTool(server, tool_name, tool_args, upstreamConfigs);
+        
+        // Return raw response directly (no caching, no file storage)
+        return upstreamResponse;
+        
+      } catch (error) {
+        // Return proper error response if upstream call fails
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to call upstream tool: ${errorMessage}`);
+        
+        return {
+          content: [
+            {
+              type: "text",  
+              text: `Error calling ${server}:${tool_name}: ${errorMessage}`
+            }
+          ],
+          isError: true
+        };
+      }
+    }
+  );
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }

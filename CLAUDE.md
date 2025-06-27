@@ -102,6 +102,7 @@ The server automatically merges process.env with server-specific environment var
 
 ## Tools Provided
 
+- `call_tool`: Calls upstream tools directly and returns raw responses in conversation context
 - `call_tool_and_store`: Calls upstream tools with smart storage and format conversion
 - `list_available_tools`: Discovers available tools with structured output and filtering options  
 - `list_tool_details`: Gets complete definition for a specific upstream tool
@@ -122,6 +123,18 @@ The server automatically merges process.env with server-specific environment var
 - Input: `{server: string, tool_name: string}`
 - Output: Complete tool definition with schema
 - Example: `list_tool_details` with `{server: "tavily-mcp", tool_name: "search"}`
+
+### Direct Tool Calling
+
+**`call_tool`** - Direct upstream tool execution:
+- Input: `{server: string, tool_name: string, tool_args?: object}`
+- Output: Raw MCP response directly in conversation context
+- **Use for**: Small responses (< 1000 tokens), immediate data needs, testing tools
+- **Avoid for**: Large responses, data that needs preservation, file uploads
+- Examples:
+  - Status checks: `{server: "system-mcp", tool_name: "get_status"}`
+  - Quick calculations: `{server: "calculator-mcp", tool_name: "calculate", tool_args: {"expression": "25 * 0.08"}}`
+  - Brief searches: `{server: "tavily-mcp", tool_name: "search", tool_args: {"query": "current bitcoin price", "max_results": 2}}`
 
 ### Enhanced Storage Features
 
