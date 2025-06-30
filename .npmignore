@@ -8,3 +8,7 @@ cache/
 tsconfig.json
 vitest.config.ts
 CLAUDE.md
+.git/
+.vscode/
+.idea/
+*.tgz
