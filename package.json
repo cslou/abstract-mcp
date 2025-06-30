@@ -1,8 +1,20 @@
 {
-  "name": "abstract",
+  "name": "abstract-mcp",
   "version": "1.0.0",
+  "description": "A caching proxy MCP server that prevents context bloat by storing large responses as files",
   "type": "module",
-  "main": "index.js",
+  "main": "./dist/abstract.js",
+  "bin": {
+    "abstract-mcp": "./dist/abstract.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "directories": {
     "doc": "docs"
   },
@@ -13,12 +25,16 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run build && npm test"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": ["mcp", "model-context-protocol", "proxy", "cache"],
+  "author": "cslou",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cslou/abstract-mcp.git"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.13.1",
     "uuid": "^11.1.0",

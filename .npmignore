@@ -1,0 +1,10 @@
+src/
+tests/
+docs/
+cache/
+*.log
+.DS_Store
+.env*
+tsconfig.json
+vitest.config.ts
+CLAUDE.md
