@@ -1,8 +1,20 @@
 {
-  "name": "abstract",
+  "name": "abstract-mcp",
   "version": "1.0.0",
+  "description": "A caching proxy MCP server that prevents context bloat by storing large responses as files",
   "type": "module",
-  "main": "index.js",
+  "main": "./dist/abstract.js",
+  "bin": {
+    "abstract-mcp": "./dist/abstract.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "directories": {
     "doc": "docs"
   },
@@ -10,20 +22,29 @@
     "build": "tsc",
     "start": "node dist/abstract.js",
     "dev": "tsc && node dist/abstract.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "prepublishOnly": "npm run build && npm test"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "keywords": ["mcp", "model-context-protocol", "proxy", "cache"],
+  "author": "cslou",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cslou/abstract-mcp.git"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.13.1",
     "uuid": "^11.1.0",
     "zod": "^3.25.67"
   },
   "devDependencies": {
-    "@types/node": "^24.0.3",
+    "@types/node": "^24.0.4",
     "@types/uuid": "^10.0.0",
-    "typescript": "^5.8.3"
+    "@vitest/ui": "^3.2.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
   }
 }

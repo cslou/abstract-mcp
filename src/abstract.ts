@@ -1,128 +1,47 @@
+#!/usr/bin/env node
+
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { CallToolResultSchema, ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { v4 as uuid } from "uuid";
+import { 
+  loadUpstreamConfigs, 
+  callUpstreamTool, 
+  listAvailableTools,
+  getToolDetails,
+  createCacheData,
+  generateCacheFilePath,
+  generateFilename,
+  extractContent,
+  createResourceLink,
+  validatePath,
+  validateDirectory,
+  readAndParseFile,
+  mergeFileDataWithArgs,
+  formatToolResponse,
+  ToolInfo
+} from "./core.js";
 
+// Parse allowed directories from command line arguments
+const allowedDirs = process.argv.slice(2).filter(arg => !arg.startsWith('-'));
+
+// Fallback to cache directory if no directories specified (backward compatibility)
 const CACHE_DIR = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../cache");
-
-// Load upstream server configurations from MCP client config
-async function loadUpstreamConfigs(): Promise<Map<string, any>> {
-  const configs = new Map();
-  
-  // Get config file path from environment
-  const configPath = process.env.APP_CONFIG_PATH;
-  if (!configPath) {
-    console.error('No config file path specified. Set APP_CONFIG_PATH environment variable.');
-    console.error('Example: APP_CONFIG_PATH="/Users/you/Library/Application Support/Claude/claude_desktop_config.json"');
-    console.error('Or for Cursor: APP_CONFIG_PATH="/Users/you/.cursor/config.json"');
-    return configs;
-  }
-  
-  // Get list of servers to proxy from environment
-  const proxyServers = process.env.ABSTRACT_PROXY_SERVERS;
-  if (!proxyServers) {
-    console.error('No upstream servers configured. Set ABSTRACT_PROXY_SERVERS environment variable.');
-    console.error('Example: ABSTRACT_PROXY_SERVERS="tavily-mcp,gordian"');
-    return configs;
-  }
-  
-  const serverNames = proxyServers.split(',').map(s => s.trim()).filter(s => s);
-  
-  // Read MCP client config
-  try {
-    const configContent = await fs.readFile(configPath, 'utf-8');
-    const config = JSON.parse(configContent);
-    
-    // Support different config structures (Claude uses mcpServers, others might differ)
-    const mcpServers = config.mcpServers || config.mcp_servers || config.servers || {};
-    
-    if (Object.keys(mcpServers).length === 0) {
-      console.error('No MCP servers found in config file');
-      return configs;
-    }
-    
-    // Extract configurations for specified servers
-    for (const serverName of serverNames) {
-      if (mcpServers[serverName]) {
-        configs.set(serverName, mcpServers[serverName]);
-      } else {
-        console.error(`Warning: Server ${serverName} not found in config file`);
-      }
-    }
-    
-    console.error(`Loaded ${configs.size} upstream server configurations`);
-    
-  } catch (error) {
-    console.error(`Failed to read config from ${configPath}: ${error}`);
-    console.error('Make sure the config file exists and contains MCP server configurations');
-  }
-  
-  return configs;
-}
-
-// Function to call upstream MCP tools
-async function callUpstreamTool(toolName: string, toolArgs: any, upstreamConfigs: Map<string, any>): Promise<any> {
-  // Parse tool name to extract server and tool parts
-  const [serverName, actualToolName] = toolName.includes(':') 
-    ? toolName.split(':', 2)
-    : ['unknown', toolName];
-  
-  console.error(`Attempting to call tool: ${actualToolName} on server: ${serverName}`);
-  console.error(`Arguments:`, JSON.stringify(toolArgs, null, 2));
-  
-  const serverConfig = upstreamConfigs.get(serverName);
-  
-  if (!serverConfig) {
-    throw new Error(`Unknown upstream server: ${serverName}. Available servers: ${Array.from(upstreamConfigs.keys()).join(', ')}`);
-  }
-  
-  // Create a new MCP client to connect to the upstream server via stdio
-  const client = new Client({
-    name: "abstract-proxy-client",
-    version: "1.0.0"
-  }, {
-    capabilities: {}
-  });
-
-  // Merge environment variables: process.env + server-specific env
-  const mergedEnv = {
-    ...process.env,
-    ...(serverConfig.env || {})
-  };
-
-  const transport = new StdioClientTransport({
-    command: serverConfig.command,
-    args: serverConfig.args || [],
-    env: mergedEnv as Record<string, string>
-  });
-
-  try {
-    await client.connect(transport);
-    
-    const result = await client.request({
-      method: 'tools/call',
-      params: {
-        name: actualToolName,
-        arguments: toolArgs
-      }
-    }, CallToolResultSchema);
-
-    await client.close();
-    return result;
-    
-  } catch (error) {
-    await client.close();
-    throw error;
-  }
-}
+const STORAGE_DIRS = allowedDirs.length > 0 ? allowedDirs : [CACHE_DIR];
 
 async function main() {
-  await fs.mkdir(CACHE_DIR, { recursive: true });
+  // Create storage directories
+  for (const dir of STORAGE_DIRS) {
+    await fs.mkdir(dir, { recursive: true });
+  }
+  
+  // Log configuration for debugging
+  console.error(`Storage directories: ${STORAGE_DIRS.join(', ')}`);
+  if (allowedDirs.length === 0) {
+    console.error('No storage directories specified. Using default cache directory for backward compatibility.');
+    console.error('Usage: node abstract.js <dir1> [dir2] ...');
+  }
   
   // Load upstream server configurations
   const upstreamConfigs = await loadUpstreamConfigs();
@@ -136,41 +55,99 @@ async function main() {
     "call_tool_and_store",
     {
       title: "Call Tool and Store",
-      description: "Calls any upstream MCP tool on your behalf, caches the full response to local storage, and returns only a compact resourceLink instead of the bulky payload. This prevents large datasets from bloating the conversation context. USE THIS TOOL when you expect a tool call to return large data that would consume excessive tokens. EXAMPLE: Instead of calling 'gordian:get_historical_crypto_prices' directly (which would return massive JSON), call call_tool_and_store with tool_name: 'gordian:get_historical_crypto_prices' and tool_args: {ticker: 'BTC-USD', start_date: '2023-01-01', end_date: '2024-01-01'}. You'll receive a file reference that can be accessed later via code execution tools without consuming context tokens.",
+      description: `**Purpose**: Calls upstream MCP tools and caches responses to prevent context bloat. Returns a compact resource link instead of large payloads, keeping conversation context clean while preserving data access.
+
+**When to Use**:
+- Expecting large responses that would consume excessive context tokens
+- Need to preserve data for later reference without cluttering context
+- Working with APIs that return substantial datasets (web search, file contents, database queries)
+
+**Prerequisites**:
+- Use list_available_tools first to discover available servers and tools
+- Use list_tool_details to understand required parameters for specific tools
+- Ensure you know the exact input parameters - never guess parameter names or formats
+
+**Examples**:
+\`\`\`json
+// Web search with data storage
+{
+  "server": "tavily-mcp",
+  "tool_name": "search", 
+  "tool_args": {"query": "latest AI developments 2024"},
+  "description": "AI news search results",
+  "file_format": "md"
+}
+
+// File operations with custom storage
+{
+  "server": "filesystem",
+  "tool_name": "read_file",
+  "tool_args": {"path": "/path/to/large-data.json"},
+  "storage_path": "/my-projects/data",
+  "filename": "imported-data",
+  "file_format": "json"
+}
+\`\`\`
+
+**Security Notes**: Only stores in allowed directories. All upstream tool arguments are passed through unchanged to the target server.`,
       inputSchema: {
-        tool_name: z.string().describe("The name of the upstream MCP tool to call (e.g., 'gordian:get_historical_crypto_prices', 'tavily:search', 'filesystem:read_file')"),
-        tool_args: z.record(z.any()).optional().describe("The arguments to pass to the upstream tool (e.g., {ticker: 'BTC-USD', start_date: '2023-01-01'})"),
-        description: z.string().optional().describe("A brief description of what data is being retrieved (e.g., 'Bitcoin prices 2023-2024', 'Search results for AI companies')")
+        server: z.string().describe("The name of the upstream MCP server. Use list_available_tools to see available options (e.g., 'tavily-mcp', 'filesystem')"),
+        tool_name: z.string().describe("The name of the tool to call on the server. Use list_tool_details to see available tools for a server (e.g., 'search', 'read_file', 'get_crypto_prices')"),
+        tool_args: z.record(z.any()).optional().describe("Arguments object to pass to the upstream tool. Must match the tool's input schema exactly (e.g., {query: \"search term\"}, {path: \"/file/path\"})"),
+        description: z.string().optional().describe("Brief description of what data is being retrieved. Used in resource link metadata (e.g., 'Bitcoin prices 2023-2024', 'Search results for AI companies')"),
+        storage_path: z.string().optional().describe("Directory path for storing response file. Must be within allowed directories (use list_allowed_directories to see options). Defaults to first allowed directory"),
+        filename: z.string().optional().describe("Custom filename without extension. Defaults to automatic naming: <server>-<tool>-<timestamp> (e.g., 'my-search-results')"),
+        file_format: z.enum(["json", "csv", "md", "txt", "html", "yaml", "xml", "tsv"]).optional().describe("Output format for converting the response data. Converts JSON to specified format. Defaults to clean JSON")
+      },
+      annotations: {
+        openWorldHint: true,
+        destructiveHint: false
       }
     },
-    async ({ tool_name, tool_args = {}, description }) => {
+    async ({ server, tool_name, tool_args = {}, description, storage_path, filename, file_format }) => {
       try {
+        // Determine target directory
+        let targetDir = storage_path || STORAGE_DIRS[0];
+        
+        // Validate storage path if provided
+        if (storage_path) {
+          if (!validatePath(storage_path, STORAGE_DIRS)) {
+            throw new Error(`Storage path ${storage_path} is not within allowed directories: ${STORAGE_DIRS.join(', ')}`);
+          }
+          if (!(await validateDirectory(storage_path))) {
+            throw new Error(`Storage directory ${storage_path} does not exist or is not writable`);
+          }
+          targetDir = storage_path;
+        }
+        
         // Attempt to call the upstream MCP tool
-        const upstreamResponse = await callUpstreamTool(tool_name, tool_args, upstreamConfigs);
+        const upstreamResponse = await callUpstreamTool(server, tool_name, tool_args, upstreamConfigs);
         
-        const cacheData = {
-          tool_name,
-          tool_args,
-          response: upstreamResponse,
-          description: description || `Response from ${tool_name}`,
-          timestamp: new Date().toISOString(),
-          type: "upstream_tool_response"
-        };
+        // Use requested format or default to clean JSON
+        const targetFormat = file_format || 'json';
         
-        const id = uuid() + ".json";
-        const file = path.join(CACHE_DIR, id);
-        await fs.writeFile(file, JSON.stringify(cacheData, null, 2));
+        // Extract and convert content (removes metadata bloat and converts format)
+        const extractedContent = extractContent(upstreamResponse, targetFormat);
+        
+        // Generate filename (custom or default timestamp-based)
+        const generatedFilename = generateFilename(server, tool_name, filename);
+        const file = generateCacheFilePath(targetDir, STORAGE_DIRS, generatedFilename, targetFormat);
+        
+        // Write the extracted content (not the full metadata wrapper)
+        await fs.writeFile(file, extractedContent);
+        
+        // Create cache data for resource link (preserving metadata for link description)
+        const cacheData = createCacheData(`${server}:${tool_name}`, tool_args, upstreamResponse, description);
+
+        // Calculate actual file size based on the content that was written to disk
+        const actualBytes = Buffer.byteLength(extractedContent);
+        const resourceLink = createResourceLink(file, cacheData, description || `Response from ${server}:${tool_name}`, actualBytes);
 
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify({
-                "@type": "resourceLink",
-                uri: `file://${file}`,
-                bytes: Buffer.byteLength(JSON.stringify(cacheData)),
-                description: description || `Response from ${tool_name}`
-              })
+              text: JSON.stringify(resourceLink)
             }
           ]
         };
@@ -184,9 +161,10 @@ async function main() {
           content: [
             {
               type: "text",  
-              text: `Error calling ${tool_name}: ${errorMessage}\n\nTroubleshooting:\n1. Check that APP_CONFIG_PATH points to your MCP client config file\n2. Verify that '${tool_name.split(':')[0]}' is listed in ABSTRACT_PROXY_SERVERS\n3. Ensure the upstream server is properly configured in your MCP client\n4. Check console logs for more details`
+              text: `Error calling ${server}:${tool_name}: ${errorMessage}`
             }
-          ]
+          ],
+          isError: true
         };
       }
     }
@@ -197,63 +175,388 @@ async function main() {
     "list_available_tools",
     {
       title: "List Available Tools",
-      description: "Lists all available tools from configured upstream MCP servers. Use this to discover what tools you can call via call_tool_and_store.",
-      inputSchema: {}
-    },
-    async () => {
-      const availableTools: string[] = [];
-      
-      for (const [serverName, serverConfig] of upstreamConfigs.entries()) {
-        try {
-          // Try to connect to each server and get its tools
-          const client = new Client({
-            name: "abstract-discovery-client",
-            version: "1.0.0"
-          }, {
-            capabilities: {}
-          });
+      description: `**Purpose**: Discovers available tools from upstream MCP servers. Returns structured data for easy parsing and tool discovery.
 
-          const mergedEnv = {
-            ...process.env,
-            ...(serverConfig.env || {})
-          };
+**When to Use**:
+- Before calling any upstream tools to see what's available
+- To explore capabilities of connected MCP servers
+- To validate server and tool names before making calls
 
-          const transport = new StdioClientTransport({
-            command: serverConfig.command,
-            args: serverConfig.args || [],
-            env: mergedEnv as Record<string, string>
-          });
+**Output Format**: Returns array of objects with \`{server, tool, description, inputSchema?}\` structure
 
-          await client.connect(transport);
-          
-          const toolsList = await client.request({
-            method: 'tools/list',
-            params: {}
-          }, ListToolsResultSchema);
+**Examples**:
+\`\`\`json
+// Basic discovery - list all tools
+{}
 
-          await client.close();
+// Get detailed schemas for all tools
+{"detailed": true}
 
-          // Add tools with server prefix
-          if (toolsList.tools) {
-            for (const tool of toolsList.tools) {
-              availableTools.push(`${serverName}:${tool.name} - ${tool.description || 'No description'}`);
-            }
-          }
-          
-        } catch (error) {
-          // If we can't connect to a server, note it
-          availableTools.push(`${serverName}: Error connecting (${error instanceof Error ? error.message : 'Unknown error'})`);
-        }
+// Focus on specific server
+{"filter_by_server": "tavily-mcp"}
+
+// Detailed view of one server
+{"detailed": true, "filter_by_server": "filesystem"}
+\`\`\`
+
+**Integration**: Use this before \`call_tool_and_store\` to discover valid server and tool_name values.`,
+      inputSchema: {
+        detailed: z.boolean().optional().describe("Include full input schemas when true. False returns basic info only (server, tool, description). Default: false"),
+        filter_by_server: z.string().optional().describe("Restrict listing to one upstream server. Must match exact server name from configuration (e.g., 'tavily-mcp', 'filesystem')")
+      },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+        destructiveHint: false
       }
+    },
+    async ({ detailed, filter_by_server }) => {
+      const availableTools = await listAvailableTools(upstreamConfigs, { 
+        detailed: detailed || false, 
+        filterByServer: filter_by_server 
+      });
 
       return {
         content: [
           {
             type: "text",
-            text: `Available upstream tools:\n\n${availableTools.join('\n')}\n\nUse call_tool_and_store with tool_name like "servername:toolname" to call any of these tools.`
+            text: JSON.stringify(availableTools, null, 2)
           }
         ]
       };
+    }
+  );
+
+  // Tool to get detailed information for a specific tool
+  server.registerTool(
+    "list_tool_details",
+    {
+      title: "Get Tool Details",
+      description: `**Purpose**: Get complete definition for a specific upstream tool including input schema, description, and parameter requirements.
+
+**When to Use**:
+- Before calling a tool to understand its exact parameter requirements
+- To explore the capabilities and constraints of a specific tool
+- To get the full input schema for complex tools with many parameters
+
+**Prerequisites**: Use \`list_available_tools\` first to discover valid server and tool_name combinations.
+
+**Examples**:
+\`\`\`json
+// Get details for web search tool
+{"server": "tavily-mcp", "tool_name": "search"}
+
+// Get details for file operations
+{"server": "filesystem", "tool_name": "read_file"}
+
+// Get details for crypto price tool
+{"server": "gordian", "tool_name": "get_crypto_prices"}
+\`\`\`
+
+**Output**: Returns complete tool definition with input schema, description, and parameter constraints.`,
+      inputSchema: {
+        server: z.string().describe("The upstream server name. Must match exactly the server names from list_available_tools (e.g., 'tavily-mcp', 'gordian')"),
+        tool_name: z.string().describe("The name of the tool to inspect. Must match exactly the tool names from list_available_tools (e.g., 'search', 'get_crypto_prices')")
+      },
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: true,
+        destructiveHint: false
+      }
+    },
+    async ({ server, tool_name }) => {
+      try {
+        const toolDetails = await getToolDetails(server, tool_name, upstreamConfigs);
+        
+        if (!toolDetails) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Tool '${tool_name}' not found on server '${server}'`
+              }
+            ]
+          };
+        }
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(toolDetails, null, 2)
+            }
+          ]
+        };
+        
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Error getting tool details: ${errorMessage}`
+            }
+          ]
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    "list_allowed_directories",
+    {
+      title: "List Allowed Storage Directories",
+      description: `**Purpose**: Lists all directories that Abstract is allowed to store responses in. These directories are specified via command line arguments when the server starts.
+
+**When to Use**:
+- Before using custom storage_path in call_tool_and_store
+- To understand where response files can be stored
+- To verify directory permissions and availability
+
+**No Parameters Required**: This tool takes no input parameters.
+
+**Output**: Returns JSON object with allowed_directories array, default_directory, and total count.
+
+**Security Context**: Abstract only stores files within these pre-configured directories to prevent unauthorized file system access.`,
+      inputSchema: {},
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false
+      }
+    },
+    async () => {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              allowed_directories: STORAGE_DIRS,
+              default_directory: STORAGE_DIRS[0],
+              total_directories: STORAGE_DIRS.length
+            }, null, 2)
+          }
+        ]
+      };
+    }
+  );
+
+  server.registerTool(
+    "call_tool_with_file_content",
+    {
+      title: "Call Tool with File Content",
+      description: `**Purpose**: Reads structured data from files (CSV, JSON, YAML, XML, TSV, TXT) and passes it to upstream MCP tools. Supports selectable output formats for optimal LLM context management.
+
+**When to Use**:
+- Bulk operations requiring large datasets (database inserts, API uploads)
+- Processing structured data files without loading them into context
+- Automated deployments using configuration files
+- Data analysis workflows with external datasets
+
+**File Format Support**: 
+- JSON: Direct parsing and passthrough
+- CSV/TSV: Converts to array of objects with headers
+- YAML: Parses to JSON object structure
+- XML: Basic parsing support
+- TXT: Attempts JSON parsing, fallback to string
+
+**Output Format Options**:
+- \`json\`: Returns full MCP response with metadata (default)
+- \`string\`: Returns clean text content, ideal for human-readable responses
+
+**Prerequisites**: 
+- File must be within allowed directories (use list_allowed_directories)
+- Use list_available_tools and list_tool_details to understand target tool requirements
+
+**Examples**:
+\`\`\`json
+// Database bulk insert with string output
+{
+  "server": "database-mcp",
+  "tool_name": "bulk_insert", 
+  "file_path": "/data/users.csv",
+  "data_key": "records",
+  "tool_args": {"table": "users"},
+  "output_format": "string"
+}
+
+// API upload with file content as entire args
+{
+  "server": "shopify-mcp",
+  "tool_name": "create_products",
+  "file_path": "/inventory/products.json"
+}
+
+// Configuration deployment
+{
+  "server": "kubernetes-mcp",
+  "tool_name": "deploy",
+  "file_path": "/configs/app.yaml",
+  "data_key": "spec",
+  "tool_args": {"namespace": "production"}
+}
+\`\`\`
+
+**Security Notes**: Files must be within allowed directories. File size limited to 10MB.`,
+      inputSchema: {
+        server: z.string().describe("The name of the upstream MCP server. Use list_available_tools to see options (e.g., 'database-mcp', 'shopify-mcp')"),
+        tool_name: z.string().describe("The name of the tool to call on the server. Use list_tool_details to see requirements (e.g., 'bulk_insert', 'create_products')"),
+        file_path: z.string().describe("Path to the input file within allowed directories. Auto-detects format from extension: .json, .csv, .tsv, .yaml, .xml, .txt (max 10MB)"),
+        data_key: z.string().optional().describe("Parameter name for injecting file content into tool arguments. If omitted, file content becomes the entire tool arguments object"),
+        tool_args: z.record(z.any()).optional().describe("Additional arguments to merge with file data. Cannot contain keys that conflict with data_key parameter"),
+        output_format: z.enum(["json", "string"]).optional().describe("Response format: 'json' returns full MCP response with metadata (default), 'string' returns clean text content only")
+      },
+      annotations: {
+        openWorldHint: true,
+        destructiveHint: false
+      }
+    },
+    async ({ server, tool_name, file_path, data_key, tool_args, output_format }) => {
+      try {
+        // Validate file path against allowed directories
+        if (!validatePath(file_path, STORAGE_DIRS)) {
+          throw new Error(`File path ${file_path} is not within allowed directories: ${STORAGE_DIRS.join(', ')}`);
+        }
+        
+        // Read and parse file content
+        const fileContent = await readAndParseFile(file_path);
+        
+        // Merge file data with tool arguments
+        const mergedArgs = mergeFileDataWithArgs(fileContent, data_key, tool_args);
+        
+        // Call upstream tool with merged arguments
+        const upstreamResponse = await callUpstreamTool(server, tool_name, mergedArgs, upstreamConfigs);
+        
+        // Format response based on selected output format
+        const selectedFormat = output_format || 'json'; // Default to JSON for backward compatibility
+        const responseText = formatToolResponse(upstreamResponse, selectedFormat);
+        
+        // Return formatted response (no file storage needed for upload operations)
+        return {
+          content: [
+            {
+              type: "text",
+              text: responseText
+            }
+          ]
+        };
+        
+      } catch (error) {
+        // Return proper error response if operation fails
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to call tool with file content: ${errorMessage}`);
+        
+        // Format error response based on selected output format
+        const selectedFormat = output_format || 'json';
+        let responseText: string;
+        
+        if (selectedFormat === 'string') {
+          responseText = `Error in call_tool_with_file_content: ${errorMessage}`;
+        } else {
+          responseText = JSON.stringify({
+            error: errorMessage,
+            tool: `${server}:${tool_name}`,
+            timestamp: new Date().toISOString()
+          }, null, 2);
+        }
+        
+        return {
+          content: [
+            {
+              type: "text",
+              text: responseText
+            }
+          ],
+          isError: true
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    "call_tool",
+    {
+      title: "Call Upstream Tool",
+      description: `**Purpose**: Calls upstream MCP tools directly and returns the raw response in conversation context. No caching or file operations.
+
+**⚠️ IMPORTANT DECISION CRITERIA**:
+- **Use call_tool**: For small responses (< 1000 tokens) that you need immediately in context. For example if you are returning 10 years of daily data, it is unlikely to be small. Also use this if the user tells you not to store the response.
+- **Use call_tool_and_store**: For large responses (> 1000 tokens) that would consume excessive context tokens
+- **Use call_tool_with_file_content**: When you need to send file data to upstream tools
+
+**When to Use call_tool**:
+- Simple queries with compact outputs (status checks, calculations, brief searches)
+- Testing or debugging upstream tools
+- Single-use data that doesn't need preservation
+- When you need the response immediately available for further processing
+
+**When NOT to Use call_tool**:
+- If response might be large (web search results, file contents, database queries with many rows)
+- If you want to preserve the data for later reference
+- If you're sending file data to the upstream tool
+
+**Prerequisites**:
+- Use list_available_tools first to discover available servers and tools
+- Use list_tool_details to understand required parameters for specific tools
+- Ensure you know the exact input parameters - never guess parameter names or formats
+
+**Examples**:
+\`\`\`json
+// Simple status check
+{
+  "server": "system-mcp",
+  "tool_name": "get_status",
+  "tool_args": {}
+}
+
+// Quick calculation
+{
+  "server": "calculator-mcp", 
+  "tool_name": "calculate",
+  "tool_args": {"expression": "25 * 0.08"}
+}
+
+// Brief search (expecting few results)
+{
+  "server": "tavily-mcp",
+  "tool_name": "search",
+  "tool_args": {"query": "current bitcoin price", "max_results": 2}
+}
+\`\`\`
+
+**⚠️ Context Management Warning**: This tool returns full responses directly to conversation context. Use call_tool_and_store for large responses to prevent context bloat.`,
+      inputSchema: {
+        server: z.string().describe("The name of the upstream MCP server. Use list_available_tools to see available options (e.g., 'tavily-mcp', 'filesystem')"),
+        tool_name: z.string().describe("The name of the tool to call on the server. Use list_tool_details to see available tools for a server (e.g., 'search', 'read_file', 'get_crypto_prices')"),
+        tool_args: z.record(z.any()).optional().describe("Arguments object to pass to the upstream tool. Must match the tool's input schema exactly (e.g., {query: \"search term\"}, {path: \"/file/path\"})")
+      },
+      annotations: {
+        openWorldHint: true,
+        destructiveHint: false
+      }
+    },
+    async ({ server, tool_name, tool_args = {} }) => {
+      try {
+        // Call upstream tool directly
+        const upstreamResponse = await callUpstreamTool(server, tool_name, tool_args, upstreamConfigs);
+        
+        // Return raw response directly (no caching, no file storage)
+        return upstreamResponse;
+        
+      } catch (error) {
+        // Return proper error response if upstream call fails
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`Failed to call upstream tool: ${errorMessage}`);
+        
+        return {
+          content: [
+            {
+              type: "text",  
+              text: `Error calling ${server}:${tool_name}: ${errorMessage}`
+            }
+          ],
+          isError: true
+        };
+      }
     }
   );
 
