@@ -565,11 +565,11 @@ export function generateCacheFilePath(targetDir: string, allowedDirs?: string[],
 }
 
 // Function to create resource link
-export function createResourceLink(filePath: string, data: any, description?: string) {
+export function createResourceLink(filePath: string, data: any, description?: string, actualBytes?: number) {
   return {
     "@type": "resourceLink",
     uri: `file://${filePath}`,
-    bytes: Buffer.byteLength(JSON.stringify(data)),
+    bytes: actualBytes !== undefined ? actualBytes : Buffer.byteLength(JSON.stringify(data)),
     description: description || "Cached tool response"
   };
 }

@@ -139,7 +139,9 @@ async function main() {
         // Create cache data for resource link (preserving metadata for link description)
         const cacheData = createCacheData(`${server}:${tool_name}`, tool_args, upstreamResponse, description);
 
-        const resourceLink = createResourceLink(file, cacheData, description || `Response from ${server}:${tool_name}`);
+        // Calculate actual file size based on the content that was written to disk
+        const actualBytes = Buffer.byteLength(extractedContent);
+        const resourceLink = createResourceLink(file, cacheData, description || `Response from ${server}:${tool_name}`, actualBytes);
 
         return {
           content: [
